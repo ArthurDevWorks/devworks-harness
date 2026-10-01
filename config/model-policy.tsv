@@ -1,0 +1,8 @@
+# role|primary|fallbacks...
+# Os identificadores sao validados pelo Antigravity CLI quando a sessao inicia.
+plan|claude-opus-4-6-thinking|gemini-3.1-pro-high|gemini-3.8-flash-high
+task-builder|claude-opus-4-6-thinking|gemini-3.1-pro-high|gemini-3.8-flash-high
+execution-routine|gemini-3.8-flash-medium|gemini-3.8-flash-high|gemini-3.1-pro-high
+execution-standard|gemini-3.8-flash-high|gemini-3.1-pro-high|claude-opus-4-6-thinking
+execution-complex|gemini-3.1-pro-high|claude-opus-4-6-thinking|gemini-3.8-flash-high
+verify|claude-sonnet-4-6|gemini-3.8-flash-high

@@ -1,0 +1,21 @@
+# IDEs
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ralph.sh runtime artifacts
+.phases/
+
+docs/*
+!docs/guia-ralph-quatro-engines.md
+!docs/agents/
+!docs/agents/**
+# Mira
+decks/
+mira-templates/
+.mira/
+CLAUDE.md
+mira.config.json

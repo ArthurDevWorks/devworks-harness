@@ -1,0 +1,11 @@
+{
+  "name": "devworks-harness",
+  "version": "0.2.0",
+  "description": "DEVWORKS harness — commands, scripts, and hooks to help developers build robust, scalable, tested, real-world-proven projects.",
+  "author": {
+    "name": "DEVWORKS",
+    "email": "administrador@beerandcode.com.br"
+  },
+  "license": "MIT",
+  "skills": "./skills/"
+}

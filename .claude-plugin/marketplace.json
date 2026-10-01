@@ -1,0 +1,18 @@
+{
+  "name": "devworks-harness",
+  "owner": {
+    "name": "DEVWORKS",
+    "email": "administrador@beerandcode.com.br"
+  },
+  "metadata": {
+    "description": "DEVWORKS harness marketplace — commands, scripts, and hooks for building robust, tested, real-world-proven projects.",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "devworks-harness",
+      "source": "./",
+      "description": "DEVWORKS harness — commands, scripts, and hooks to help developers build robust, scalable, tested, real-world-proven projects."
+    }
+  ]
+}
