@@ -77,11 +77,21 @@ possam ser verificados.
 
 Apresente primeiro a decomposição: quantidade de tarefas, arquivos tocados,
 riscos e comandos de teste. Só considere a fase pronta após a aprovação da
-pessoa desenvolvedora. Depois dela, a chamada típica é:
+pessoa desenvolvedora. Depois dela, a chamada para executar somente esta fase é:
 
 ```sh
 scripts/ralph.sh .spec/features/<slug>/phases/<NN>-<slug-da-fase>/PHASES.md
 ```
+
+Quando todas as fases aprovadas já tiverem seus respectivos `PHASES.md`, use o
+diretório da feature para executá-las em sequência num único run:
+
+```sh
+scripts/ralph.sh .spec/features/<slug>
+```
+
+O Ralph descobre `.spec/features/<slug>/phases/*/PHASES.md`, ordena pelos
+diretórios e para na primeira falha. `--keep-going` continua após uma falha.
 
 ## Validação
 
@@ -98,5 +108,7 @@ TASKS="$(grep -cE '^- \[ \] \*\*Task:\*\*' "$F")"; [ "$TASKS" -ge 1 ]
 [ "$TASKS" -eq "$(grep -c '^  - \*\*Tests:\*\*' "$F")" ]
 ```
 
-Relate o arquivo criado, tarefas, riscos e comandos de teste. Não inicie o
-Ralph automaticamente; a execução é uma decisão explícita da pessoa usuária.
+Relate o arquivo criado, tarefas, riscos e comandos de teste. Se todas as fases
+da feature já estiverem detalhadas, apresente primeiro o comando único com o
+diretório da feature. Não inicie o Ralph automaticamente; a execução é uma
+decisão explícita da pessoa usuária.

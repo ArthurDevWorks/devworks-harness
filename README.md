@@ -65,19 +65,21 @@ and invoke its scripts from the target project. It does not depend on a Claude
 Code plugin, marketplace, or command namespace.
 
 The canonical `init`, `plan`, `task-builder`, and `ai-context` Skills live in
-`skills/`. The installer copies identical content to each engine's discovery
-directory; it stores no tokens and needs no target-project dependency:
+`skills/`. With `--scope project`, the installer also copies Ralph, the
+dashboard, engine adapters, and model policy into the target repository:
 
 ```bash
 scripts/install-platform.sh --platform codex --scope project
 scripts/install-platform.sh --platform claude --scope project
-scripts/install-platform.sh --platform opencode --scope user
+scripts/install-platform.sh --platform opencode --scope project
 scripts/install-platform.sh --platform antigravity --scope project
 ```
 
 See [the cross-platform workflow contract](docs/agents/canonical-workflows.md).
 
-`ralph.sh` is a standalone bash script — copy or reference `scripts/ralph.sh` and run it directly in the target project's repository.
+The selected platform becomes the project's default engine. Run
+`scripts/ralph.sh` and `scripts/ralph-web.sh` locally after installation;
+`--engine` can still override the default for one run.
 
 ### Installation destinations
 
@@ -91,6 +93,7 @@ See [the cross-platform workflow contract](docs/agents/canonical-workflows.md).
 Use `--check` to validate the CLI and destination without copying files. A
 regular installation requires an authenticated CLI and validates all four
 Skills before writing.
+User scope installs Skills only; the executable runtime is project scoped.
 
 ## What's new: DEVWORKS, multi-agent workflows, and observability
 
@@ -113,7 +116,7 @@ four Skills before creating any directory:
 ```bash
 scripts/install-platform.sh --platform codex --scope project
 scripts/install-platform.sh --platform claude --scope project
-scripts/install-platform.sh --platform opencode --scope user
+scripts/install-platform.sh --platform opencode --scope project
 scripts/install-platform.sh --platform antigravity --scope project
 ```
 
@@ -208,13 +211,14 @@ Key characteristics:
 - **Human checkpoints** at every step: confirmation of the normalized input, SPEC approval, ambiguity resolution, decomposition sign-off.
 - **Two-phase clarifier** — the agent analyzes the SPEC and returns prioritized questions; the router presents them to the developer and re-invokes the agent with the answers, which updates the SPEC in-place.
 - **Architecture gate** — requires `AGENTS.md` / `docs/agents/` (or warns and flags `architecture_reference_status: missing`). The pipeline never plans silently without architecture context.
-- **Never writes application code.** The close-out points at the execution handoff:
+- **Never writes application code.** Once all approved phases are detailed,
+  execute the feature directory:
 
 ```bash
-./ralph.sh .spec/features/<slug>/PHASES.md
+scripts/ralph.sh .spec/features/<slug>
 ```
 
-In the portable flow, pass Ralph the Task Builder output:
+To execute only one phase, pass its Task Builder output directly:
 
 ```bash
 ./scripts/ralph.sh .spec/features/<slug>/phases/<NN>-<name>/PHASES.md
@@ -256,10 +260,13 @@ Reads a phase document, splits it on the `## Phase N: <title>` heading, and feed
 For a Portuguese operational walkthrough, see [the four-engine Ralph guide](docs/guia-ralph-quatro-engines.md).
 
 ```bash
-./scripts/ralph.sh [options] [path-to-file]
+./scripts/ralph.sh [options] [phase-file-or-feature-directory]
 ```
 
-With no argument, the input resolves in this order: `.spec/init/project-phases.md` → `.spec/project-phases.md` (pre-init layout, with a warning). A feature `PHASES.md` is also valid input.
+When given `.spec/features/<slug>`, Ralph discovers and orders
+`phases/*/PHASES.md`, then executes them in one run. A single `PHASES.md`
+remains valid. With no argument, the input resolves in this order:
+`.spec/init/project-phases.md` → `.spec/project-phases.md`.
 
 > **Autonomy and permissions note**: Ralph is an unattended orchestrator by design. Implementation sessions are autonomous: Codex uses `danger-full-access`, Claude uses `--dangerously-skip-permissions`, OpenCode uses `run --auto`, and Antigravity uses `accept-edits` with `--dangerously-skip-permissions`. Run it only in repositories you trust, ideally in a disposable branch or isolated environment (container/VM). Ralph never stages, commits, resets, or changes Git exclusion settings; review its accumulated diff and commit manually. Gate 3 is constrained: Codex is read-only; Claude allows only `Read,Glob,Grep`; OpenCode's inline configuration denies everything except read/glob/grep; Antigravity uses `--mode plan --sandbox`, without the dangerous flag.
 

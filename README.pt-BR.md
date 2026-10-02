@@ -64,19 +64,21 @@ diretório local e use seus scripts a partir do projeto-alvo. Não depende de
 plugin, marketplace ou namespace de Claude Code.
 
 Os Skills canônicos `init`, `plan`, `task-builder` e `ai-context` estão em
-`skills/`. O instalador copia o mesmo conteúdo para o destino de descoberta de
-cada engine; não grava tokens nem depende de dependências do projeto-alvo:
+`skills/`. No escopo `project`, o instalador também copia o runtime para
+`scripts/`, o dashboard, os adaptadores e a política de modelos. Depois da
+instalação, Ralph e dashboard são executados pelo caminho local do projeto:
 
 ```bash
 scripts/install-platform.sh --platform codex --scope project
 scripts/install-platform.sh --platform claude --scope project
-scripts/install-platform.sh --platform opencode --scope user
+scripts/install-platform.sh --platform opencode --scope project
 scripts/install-platform.sh --platform antigravity --scope project
 ```
 
 Veja o [contrato de workflows multiplataforma](docs/agents/canonical-workflows.md).
 
-O `ralph.sh` é um script bash independente — copie ou referencie `scripts/ralph.sh` e rode direto no repositório do projeto-alvo.
+O instalador registra a plataforma escolhida como engine padrão. `--engine`
+continua disponível para sobrescrever a engine em uma execução específica.
 
 ### Destinos de instalação
 
@@ -89,6 +91,8 @@ O `ralph.sh` é um script bash independente — copie ou referencie `scripts/ral
 
 Use `--check` para validar a CLI e o destino sem copiar arquivos. A instalação
 normal exige CLI autenticada e valida os quatro Skills antes de escrever.
+No escopo `user`, somente os Skills são instalados; o runtime pertence ao
+projeto.
 
 ## Novidades: DEVWORKS, múltiplos agentes e observabilidade
 
@@ -111,7 +115,7 @@ antes de criar qualquer diretório:
 ```bash
 scripts/install-platform.sh --platform codex --scope project
 scripts/install-platform.sh --platform claude --scope project
-scripts/install-platform.sh --platform opencode --scope user
+scripts/install-platform.sh --platform opencode --scope project
 scripts/install-platform.sh --platform antigravity --scope project
 ```
 
@@ -190,15 +194,15 @@ git switch -c feat/minha-funcionalidade
 codex login
 codex --version
 
-# 4. Copiar os Skills DEVWORKS para este projeto.
+# 4. Instalar Skills, scripts e dashboard neste projeto.
 /caminho/devworks-harness/scripts/install-platform.sh \
-  --platform codex --scope project
+  --platform codex --scope project --root .
 ```
 
 O passo 1 confirma que nenhum trabalho alheio será incluído. O passo 2 isola o
 resultado. O passo 3 autentica e confirma a CLI instalada. O passo 4 usa o
-diretório nativo da engine (para Codex, `.agents/skills/`), sem copiar
-dependências de frontend ou servidor.
+diretório nativo da engine (para Codex, `.agents/skills/`) e instala o runtime
+local em `scripts/`. A engine escolhida fica registrada como padrão.
 
 Em seguida, abra o projeto no Codex e envie estes prompts, nesta ordem:
 
@@ -219,18 +223,16 @@ Use o Skill task-builder para a fase <N> de .spec/features/<slug>.
 Não implemente código. Gere o PHASES.md de uma única fase.
 ```
 
-Revise o `PHASES.md` criado em `.spec/features/<slug>/phases/`. Quando estiver
-aprovado, execute a fase; o Ralph preserva as mudanças para sua revisão:
+Revise os arquivos criados em `.spec/features/<slug>/phases/`. Quando todas as
+fases estiverem aprovadas, informe o diretório da feature para executá-las em
+sequência; o Ralph preserva as mudanças para sua revisão:
 
 ```bash
-# 5. Executar as fases.
-/caminho/devworks-harness/scripts/ralph.sh \
-  --engine codex \
-  --test-cmd 'php artisan test' \
-  .spec/features/<slug>/phases/<NN>-<nome>/PHASES.md
+# 5. Executar todas as fases da feature em ordem.
+scripts/ralph.sh --test-cmd 'php artisan test' .spec/features/<slug>
 
 # 6. Em outro terminal, acompanhar sem controlar a execução.
-/caminho/devworks-harness/scripts/ralph-web.sh .
+scripts/ralph-web.sh .
 ```
 
 Abra `http://127.0.0.1:7331`. Ao terminar, revise o diff completo, execute o
@@ -296,15 +298,13 @@ Características:
 - **Gate de arquitetura** — exige `AGENTS.md` / `docs/agents/` (ou avisa e marca `architecture_reference_status: missing`). Sem contexto de arquitetura o pipeline nunca planeja em silêncio.
 - **Nunca escreve código de aplicação.** O fechamento aponta o handoff de execução:
 
-```bash
-./ralph.sh .spec/features/<slug>/PHASES.md
-```
-
-No fluxo portátil, passe ao Ralph o caminho criado pelo Task Builder:
+Quando todas as fases estiverem detalhadas, execute o diretório da feature:
 
 ```bash
-./scripts/ralph.sh .spec/features/<slug>/phases/<NN>-<nome>/PHASES.md
+scripts/ralph.sh .spec/features/<slug>
 ```
+
+Para executar somente uma fase, passe seu `PHASES.md` diretamente.
 
 ### `/ai-context` — árvore de contexto canônica
 
@@ -342,10 +342,13 @@ Lê um documento de fases, quebra pelo heading `## Phase N: <título>` e aliment
 Consulte também o [guia operacional dos quatro engines](docs/guia-ralph-quatro-engines.md).
 
 ```bash
-./scripts/ralph.sh [opções] [caminho-do-arquivo]
+./scripts/ralph.sh [opções] [arquivo-ou-diretório-da-feature]
 ```
 
-Sem argumento, resolve o input nesta ordem: `.spec/init/project-phases.md` → `.spec/project-phases.md` (layout pré-init, com aviso). Um `PHASES.md` de feature também é input válido.
+Ao receber `.spec/features/<slug>`, descobre `phases/*/PHASES.md`, ordena os
+arquivos e executa todas as fases no mesmo run. Um `PHASES.md` continua válido
+para execução isolada. Sem argumento, resolve o input nesta ordem:
+`.spec/init/project-phases.md` → `.spec/project-phases.md`.
 
 > **Nota sobre autonomia e permissões**: Ralph é um orquestrador não assistido. As sessões de implementação são autônomas: Codex usa `danger-full-access`, Claude usa `--dangerously-skip-permissions`, OpenCode usa `run --auto` e Antigravity usa `accept-edits` com `--dangerously-skip-permissions`. Rode apenas em repositórios confiáveis, de preferência em branch descartável ou ambiente isolado (container/VM). Ralph não faz stage, commit, reset nem altera exclusões do Git; revise o diff acumulado e faça o commit manualmente. O Gate 3 é restrito: Codex é somente leitura; Claude permite apenas `Read,Glob,Grep`; a configuração inline do OpenCode nega tudo exceto read/glob/grep; Antigravity usa `--mode plan --sandbox`, sem a flag perigosa.
 

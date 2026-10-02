@@ -33,7 +33,22 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; th
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
+PYTHON_BIN="${RALPH_PYTHON:-}"
+PYTHON_ARCH=()
+if [ -z "$PYTHON_BIN" ]; then
+  APPLE_SILICON=false
+  if [ "$(uname -s)" = "Darwin" ]; then
+    [ "$(uname -m)" = "arm64" ] && APPLE_SILICON=true
+    [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || true)" = "1" ] && APPLE_SILICON=true
+  fi
+  if $APPLE_SILICON && [ -x /Library/Developer/CommandLineTools/usr/bin/python3 ]; then
+    PYTHON_BIN=/Library/Developer/CommandLineTools/usr/bin/python3
+    PYTHON_ARCH=(arch -arm64)
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+  fi
+fi
+if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then
   echo "python3 e necessario para o monitor web." >&2
   exit 1
 fi
@@ -43,4 +58,4 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Ralph Web: http://127.0.0.1:${PORT}"
 echo "Monitor local e somente leitura. Ctrl-C para encerrar."
-exec python3 "$SCRIPT_DIR/dashboard/server.py" --repo "$REPO" --port "$PORT"
+exec "${PYTHON_ARCH[@]}" "$PYTHON_BIN" "$SCRIPT_DIR/dashboard/server.py" --repo "$REPO" --port "$PORT"

@@ -1,5 +1,5 @@
 const statusText={running:'▶ Em execução',waiting:'⏸ Aguardando limite',finished:'✓ Concluído',failed:'✗ Falhou',done:'✓ Concluída',incomplete:'! Incompleta',skipped:'– Pulada',pending:'· Pendente'};
-const $=s=>document.querySelector(s); let selected='current', logOffsets=new Map();
+const $=s=>document.querySelector(s); let selected='current', logOffsets=new Map(), followLogs=true;
 function esc(value){return String(value??'—').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function status(value){return `<span class="${esc(value)}">${statusText[value]||esc(value)}</span>`}
 function count(state){let total=0,done=0;state.phases.forEach(p=>p.tasks.forEach(t=>{total++;if(t.status==='done')done++}));return{total,done}}
@@ -17,6 +17,15 @@ function render(state){
   $('#updated').textContent=`Atualizado ${new Date(state.updated_at*1000).toLocaleTimeString()}`;
 }
 function duration(start,end){if(!start)return'—';let s=Math.max(0,(Number(end)||Math.floor(Date.now()/1000))-Number(start));const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h}h ${m}m`:`${m}m ${s%60}s`}
+function nearLogEnd(){const logs=$('#logs');return logs.scrollHeight-logs.scrollTop-logs.clientHeight<40}
+function scrollLogsToEnd(){const logs=$('#logs');requestAnimationFrame(()=>{logs.scrollTop=logs.scrollHeight})}
+function setFollowLogs(value){followLogs=value;const button=$('#follow-logs');button.classList.toggle('active',value);button.setAttribute('aria-pressed',String(value));button.textContent=value?'Seguindo':'Seguir logs';$('#log-status').textContent=value?'Seguindo novas linhas':'Rolagem pausada para leitura';if(value)scrollLogsToEnd()}
+function renderLogs(text,replace){const logs=$('#logs');if(replace){logs.textContent=text||'Aguardando logs…';logs.dataset.placeholder=text?'false':'true'}else if(text){if(logs.dataset.placeholder==='true')logs.textContent='';logs.textContent+=text;logs.dataset.placeholder='false'}if(followLogs)scrollLogsToEnd()}
 async function refreshRuns(){const data=await fetch('/api/v1/runs',{cache:'no-store'}).then(r=>r.json());const select=$('#runs'), previous=selected;select.replaceChildren(...data.runs.map(run=>{const opt=document.createElement('option');opt.value=run.current?'current':run.id;opt.textContent=`${run.current?'● ':''}${run.id||'legado'} · ${run.status||'sem estado'}`;return opt}));if([...select.options].some(o=>o.value===previous))select.value=previous;else {selected=select.value||'current'};}
-async function refresh(){try{await refreshRuns();const url=selected==='current'?'/api/v1/runs/current':`/api/v1/runs/${encodeURIComponent(selected)}`;const state=await fetch(url,{cache:'no-store'}).then(r=>r.json());render(state);const runId=state.run?.id;if(runId){const after=logOffsets.get(runId)||0;const logs=await fetch(`/api/v1/runs/${encodeURIComponent(runId)}/logs?after=${after}`,{cache:'no-store'}).then(r=>r.json());if(logs.truncated||after===0)$('#logs').textContent=logs.text;else $('#logs').textContent+=logs.text;logOffsets.set(runId,logs.next_offset);}}catch(error){$('#notice').textContent=`Falha ao ler o estado: ${error.message}`}}
-$('#runs').addEventListener('change',e=>{selected=e.target.value;$('#logs').textContent='';refresh()});refresh();setInterval(refresh,1000);
+async function refresh(){try{await refreshRuns();const url=selected==='current'?'/api/v1/runs/current':`/api/v1/runs/${encodeURIComponent(selected)}`;const state=await fetch(url,{cache:'no-store'}).then(r=>r.json());render(state);const runId=state.run?.id;if(runId){const after=logOffsets.get(runId)||0;const logs=await fetch(`/api/v1/runs/${encodeURIComponent(runId)}/logs?after=${after}`,{cache:'no-store'}).then(r=>r.json());renderLogs(logs.text,logs.truncated||after===0);logOffsets.set(runId,logs.next_offset);}}catch(error){$('#notice').textContent=`Falha ao ler o estado: ${error.message}`}}
+$('#runs').addEventListener('change',e=>{selected=e.target.value;$('#logs').textContent='Aguardando logs…';$('#logs').dataset.placeholder='true';setFollowLogs(true);refresh()});
+$('#logs').addEventListener('scroll',()=>{if(followLogs&&!nearLogEnd())setFollowLogs(false);else if(!followLogs&&nearLogEnd())setFollowLogs(true)});
+$('#follow-logs').addEventListener('click',()=>setFollowLogs(!followLogs));
+$('#jump-logs').addEventListener('click',()=>setFollowLogs(true));
+$('#logs').dataset.placeholder='true';
+refresh();setInterval(refresh,1000);

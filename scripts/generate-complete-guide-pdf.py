@@ -15,6 +15,7 @@ from reportlab.platypus import (
     BaseDocTemplate,
     Flowable,
     Frame,
+    KeepTogether,
     PageBreak,
     PageTemplate,
     Paragraph,
@@ -61,7 +62,7 @@ def page_background(canvas, doc) -> None:
     canvas.rect(0, PAGE_H - 12 * mm, PAGE_W, 12 * mm, fill=1, stroke=0)
     canvas.setFillColor(BLUE)
     canvas.setFont("Courier-Bold", 7.6)
-    canvas.drawString(18 * mm, PAGE_H - 7.6 * mm, "DEVWORKS HARNESS / GUIA COMPLETO")
+    canvas.drawString(18 * mm, PAGE_H - 7.6 * mm, "DEVWORKS HARNESS / GUIA PRATICO")
     canvas.setFillColor(MUTED)
     canvas.setFont("Courier", 7)
     canvas.drawRightString(PAGE_W - 18 * mm, PAGE_H - 7.6 * mm, f"PAGINA {doc.page}")
@@ -174,7 +175,7 @@ def source_link(label: str, url: str) -> Paragraph:
     return para(f'<link href="{escape(url)}" color="#68AEFF">{escape(label)}</link>', "Tiny", raw=True)
 
 
-def build_story() -> list:
+def build_complete_story() -> list:
     story: list = []
 
     story += [
@@ -251,13 +252,29 @@ def build_story() -> list:
     story += [
         para("Mantenha uma cópia central do DEVWORKS Harness fora dos projetos atendidos. Os scripts são chamados a partir da raiz do projeto-alvo."),
         code("git clone <url-interno-ou-github>/devworks-harness.git\ncd devworks-harness\ngit switch main\nchmod +x scripts/*.sh scripts/engines/*.sh"),
+        para("Instalar os Skills numa plataforma", "Sub"),
+        para("O Harness instala os quatro Skills canônicos (init, plan, task-builder e ai-context) para uma engine por execução. Defina os caminhos uma vez e execute a linha da engine desejada; repita para instalar em mais de uma. Use os nomes aceitos em --platform, não o nome do executável."),
+        code("INSTALLER=/caminho/devworks-harness/scripts/install-platform.sh\nPROJECT=/caminho/do/projeto-alvo\n\"$INSTALLER\" --platform codex --scope project --root \"$PROJECT\"\n\"$INSTALLER\" --platform claude --scope project --root \"$PROJECT\"\n\"$INSTALLER\" --platform opencode --scope project --root \"$PROJECT\"\n\"$INSTALLER\" --platform antigravity --scope project --root \"$PROJECT\""),
+        grid(
+            ["--platform", "Executável", "Destino no projeto"],
+            [
+                ["codex", "codex", ".agents/skills/"],
+                ["claude", "claude", ".claude/skills/"],
+                ["opencode", "opencode", ".opencode/skills/"],
+                ["antigravity", "agy", ".agents/skills/"],
+            ],
+            [43, 43, 88],
+            font="Tiny",
+        ),
+        para("Use --scope user para instalar no perfil do usuário em vez do projeto. A CLI correspondente precisa estar instalada; o instalador valida sua versão antes de copiar. Para Antigravity, informe --platform antigravity (o executável chamado é agy). --check valida CLI e destino sem copiar arquivos."),
         para("Valide o harness antes de compartilhar", "Sub"),
         code("./scripts/check-shell.sh\n./scripts/test-ralph.sh\ngit diff --check"),
         para("Uso a partir de outro projeto", "Sub"),
         code("cd /caminho/do/projeto-alvo\ngit switch -c feat/minha-entrega\n/caminho/devworks-harness/scripts/ralph.sh --help"),
         callout("IMPORTANTE", "O Ralph é independente e está pronto para as quatro engines. Os quatro Skills canônicos já estão empacotados; rode check-skill-drift antes de distribuir uma nova versão. O plugin Claude continua como adaptador compatível.", YELLOW),
-        para("Estrutura relevante", "Sub"),
-        grid(
+        KeepTogether([
+            para("Estrutura relevante", "Sub"),
+            grid(
             ["Caminho", "Finalidade"],
             [
                 ["scripts/ralph.sh", "Orquestrador principal"],
@@ -269,7 +286,8 @@ def build_story() -> list:
                 ["commands/ e agents/", "Adaptador de compatibilidade do plugin Claude"],
             ],
             [61, 113],
-        ),
+            ),
+        ]),
         PageBreak(),
     ]
 
@@ -615,6 +633,64 @@ def build_story() -> list:
     return story
 
 
+def build_story() -> list:
+    """Build the short, task-oriented guide used by the current PDF."""
+    story: list = [
+        Spacer(1, 5 * mm),
+        para("DEVWORKS HARNESS", "Kicker"),
+        para("GUIA PRATICO DE USO", "TitleDark"),
+        para("Instale Skills e scripts, documente o projeto, planeje a entrega, detalhe as fases e acompanhe a execução.", "Body"),
+        callout("FLUXO", "Instalar -> documentar -> planejar -> task-builder -> executar -> acompanhar no dashboard", GREEN),
+        Spacer(1, 4 * mm),
+    ]
+
+    story += section("1", "Instale os Skills", "ESCOLHA UMA ENGINE")
+    story += [
+        para("Entre no projeto-alvo e rode o instalador central uma vez. Ele copia os Skills, Ralph e dashboard para o projeto e registra a engine escolhida como padrão."),
+        code("cd /caminho/do/projeto\nPLATFORM=codex  # codex | claude | opencode | antigravity\n/caminho/devworks-harness/scripts/install-platform.sh \\\n  --platform \"$PLATFORM\" \\\n  --scope project \\\n  --root ."),
+        grid(
+            ["PLATFORM", "CLI", "Skills no projeto"],
+            [
+                ["codex", "codex", ".agents/skills/"],
+                ["claude", "claude", ".claude/skills/"],
+                ["opencode", "opencode", ".opencode/skills/"],
+                ["antigravity", "agy", ".agents/skills/"],
+            ],
+            [40, 40, 94],
+            font="Tiny",
+        ),
+        para("Para instalar em outra engine, troque PLATFORM e rode novamente. No Antigravity, use antigravity; agy é o executável. Depois use scripts/ralph.sh e scripts/ralph-web.sh do próprio projeto."),
+        para("2. Documente o código existente", "Sub"),
+        para("Abra o projeto na engine escolhida e envie este pedido:"),
+        code("Use o Skill ai-context. Analise o código que já existe e gere a documentação de contexto do projeto. Não implemente mudanças."),
+        para("Use em projeto legado. Para um projeto novo, comece pelo Skill init."),
+        para("3. Planeje a entrega", "Sub"),
+        code("Use o Skill plan para planejar: descreva aqui o objetivo, as regras e os critérios de aceite. Leia AGENTS.md e docs/agents/. Não implemente código."),
+        para("Revise e aprove SPEC.md e PLAN.md em .spec/features/minha-feature/ antes de seguir."),
+        PageBreak(),
+    ]
+
+    story += section("4", "Detalhe as fases", "TASK BUILDER")
+    story += [
+        para("Depois de aprovar o PLAN.md, peça arquivos executáveis para as fases aprovadas:"),
+        code("Use o Skill task-builder para detalhar as fases aprovadas em .spec/features/minha-feature/PLAN.md. Gere um PHASES.md por fase, sem implementar."),
+        para("Revise os arquivos em .spec/features/minha-feature/phases/ antes de executar."),
+        para("5. Execute com Ralph", "Sub"),
+        callout("ATENCAO", "O Ralph executa as fases sem interação e pode alterar arquivos. Confira o projeto e a branch antes de iniciar; ele não cria commits.", YELLOW),
+        code("cd /caminho/do/projeto\nscripts/ralph.sh .spec/features/minha-feature"),
+        para("O Ralph usa a engine registrada na instalação e executa phases/*/PHASES.md em ordem. Para trocar apenas neste run, use --engine. Se não detectar os testes, informe --test-cmd 'comando-de-testes'."),
+        para("6. Acompanhe no dashboard", "Sub"),
+        para("Depois de iniciar o Ralph, abra outro terminal e execute:"),
+        code("scripts/ralph-web.sh ."),
+        para("Abra http://127.0.0.1:7331 no navegador. Deixe esse terminal aberto enquanto acompanha a execução. O dashboard mostra o run e os logs; não controla nem interrompe o Ralph."),
+        para("Quando terminar", "Sub"),
+        para("Confira o resultado com git diff, execute a validação manual da entrega e faça o commit depois da revisão."),
+        Spacer(1, 4 * mm),
+        callout("RESUMO", "Instalador: scripts/install-platform.sh  |  Execução: scripts/ralph.sh  |  Dashboard: scripts/ralph-web.sh", GREEN),
+    ]
+    return story
+
+
 def main() -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     frame = Frame(18 * mm, 17 * mm, 174 * mm, 258 * mm, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
@@ -625,9 +701,9 @@ def main() -> None:
         rightMargin=18 * mm,
         topMargin=18 * mm,
         bottomMargin=17 * mm,
-        title="DEVWORKS Harness - Guia Completo de Uso",
+        title="DEVWORKS Harness - Guia Prático de Uso",
         author="DEVWORKS",
-        subject="Instalação, engines, modelos, projetos novos, legados e operação do Ralph",
+        subject="Passos práticos para instalar, documentar, planejar, detalhar e executar fases com dashboard",
     )
     document.addPageTemplates([PageTemplate(id="devworks", frames=[frame], onPage=page_background)])
     document.build(build_story())

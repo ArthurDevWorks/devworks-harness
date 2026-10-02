@@ -20,11 +20,12 @@
 # linguagem, framework, comandos e convencoes.
 #
 # Uso:
-#   ./ralph.sh [opcoes] [caminho-do-arquivo]
+#   ./ralph.sh [opcoes] [arquivo-ou-diretorio-da-feature]
 #
 # Opcoes:
 #   --engine codex|claude|opencode|antigravity
-#                            engine de implementacao (default: codex)
+#                            engine de implementacao (default: plataforma
+#                            registrada na instalacao; codex como fallback)
 #   --profile routine|standard|complex
 #                            perfil do modelo Antigravity (default: standard)
 #   --from N                 comeca na fase N (limpa do progresso as fases >= N)
@@ -44,12 +45,18 @@
 #   progresso POR TASK em tempo real pelo protocolo RALPH-TASK. No Codex a
 #   granularidade continua por fase.
 #
-# Input (primeiro arquivo posicional). Sem argumento, resolve nesta ordem:
+# Input (primeiro argumento posicional). Pode ser:
+#   - um PHASES.md, para executar somente o documento informado;
+#   - o diretorio .spec/features/<slug>, para executar todos os arquivos
+#     phases/*/PHASES.md em ordem.
+#
+# Sem argumento, resolve nesta ordem:
 #   1. .spec/init/project-phases.md      (cadeia init)
 #   2. .spec/project-phases.md           (repos pre-init, com aviso)
 #
-#   Um PHASES.md de feature tambem e input valido:
+#   Exemplos:
 #     ./ralph.sh .spec/features/<slug>/PHASES.md
+#     ./ralph.sh .spec/features/<slug>
 #
 # Contrato de formato do input (validado no preflight):
 #   - >= 1 heading `## Phase N: <titulo>`
@@ -124,8 +131,9 @@
 
 set -euo pipefail
 
-ENGINE="codex"
+ENGINE=""
 INPUT_FILE=""
+INPUT_SOURCE=""
 FROM_PHASE=0
 KEEP_GOING=false
 TEST_CMD_FLAG=""
@@ -179,6 +187,15 @@ LIMIT_BUFFER="${RALPH_LIMIT_BUFFER:-60}"
 ANTIGRAVITY_TIMEOUT="${RALPH_ANTIGRAVITY_TIMEOUT:-30m}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_POLICY="${RALPH_MODEL_POLICY:-$SCRIPT_DIR/../config/model-policy.tsv}"
+DEFAULT_ENGINE_FILE="$SCRIPT_DIR/../config/devworks-harness-engine"
+
+if [ -z "$ENGINE" ]; then
+  if [ -s "$DEFAULT_ENGINE_FILE" ]; then
+    ENGINE="$(sed -n '1p' "$DEFAULT_ENGINE_FILE" | tr -d '[:space:]')"
+  else
+    ENGINE="codex"
+  fi
+fi
 
 TEST_CMD=""
 SAIL_BIN=""
@@ -327,6 +344,42 @@ load_engine_adapter() {
 
 resolve_input_file() {
   if [ -n "$INPUT_FILE" ]; then
+    INPUT_SOURCE="$INPUT_FILE"
+    if [ -d "$INPUT_FILE" ]; then
+      local feature_dir="$INPUT_FILE" phases_dir aggregate_tmp aggregate_file input_hash slug file
+      if [ "$(basename "$feature_dir")" = "phases" ]; then
+        phases_dir="$feature_dir"
+        feature_dir="$(dirname "$feature_dir")"
+      else
+        phases_dir="$feature_dir/phases"
+      fi
+      if [ ! -d "$phases_dir" ]; then
+        fail "Diretorio de fases nao encontrado: $phases_dir"
+        exit 1
+      fi
+
+      local -a phase_files=()
+      while IFS= read -r file; do phase_files+=("$file"); done \
+        < <(find "$phases_dir" -mindepth 2 -maxdepth 2 -type f -name PHASES.md | LC_ALL=C sort)
+      if [ "${#phase_files[@]}" -eq 0 ]; then
+        fail "Nenhum PHASES.md encontrado em $phases_dir"
+        exit 1
+      fi
+
+      mkdir -p "$PHASES_ROOT/inputs"
+      input_hash=$({ for file in "${phase_files[@]}"; do sha256sum "$file"; done; } | sha256sum | cut -c1-12)
+      slug="$(basename "$feature_dir")"
+      aggregate_file="$PHASES_ROOT/inputs/${slug}-${input_hash}.md"
+      aggregate_tmp="$aggregate_file.$$"
+      : > "$aggregate_tmp"
+      for file in "${phase_files[@]}"; do
+        cat "$file" >> "$aggregate_tmp"
+        printf '\n\n## Combined input boundary\n\n' >> "$aggregate_tmp"
+      done
+      mv -f "$aggregate_tmp" "$aggregate_file"
+      INPUT_FILE="$aggregate_file"
+      log "Entrada da feature: ${#phase_files[@]} arquivos PHASES.md combinados em ordem"
+    fi
     return 0
   fi
 
@@ -340,6 +393,7 @@ resolve_input_file() {
     fail "Esperado .spec/init/project-phases.md (rode /init:project-phases) ou passe o caminho como argumento."
     exit 1
   fi
+  INPUT_SOURCE="$INPUT_FILE"
 }
 
 validate_input_format() {
@@ -358,6 +412,14 @@ validate_input_format() {
     fail "Contrato de formato violado: headings '## Phase' fora do formato '## Phase N: <titulo>':"
     echo "$malformed" | sed 's/^/    /'
     fail "Uma fase com heading torto some silenciosamente do run. Corrija antes de gastar tokens."
+    exit 1
+  fi
+
+  local duplicated
+  duplicated=$(sed -nE 's/^## Phase ([0-9]+): .*/\1/p' "$INPUT_FILE" | sort -n | uniq -d | paste -sd ', ' -)
+  if [ -n "$duplicated" ]; then
+    fail "Contrato de formato violado: numeros de fase repetidos: $duplicated"
+    fail "Cada arquivo em phases/*/PHASES.md deve declarar um numero de fase unico."
     exit 1
   fi
 
@@ -830,7 +892,7 @@ state_init() {
     [model]="${IMPLEMENTATION_MODEL:-—}"
     [profile]="$EXECUTION_PROFILE"
     [failovers]="0"
-    [input]="$INPUT_FILE"
+    [input]="${INPUT_SOURCE:-$INPUT_FILE}"
     [status]="running"
     [started]="$(date +%s)"
     [ended]=""
@@ -931,20 +993,93 @@ state_absorb_live() {
   state_flush
 }
 
-# O veredito do gate 3 e a verdade sobre cada task: sobrepoe o que a sessao
-# achou que fez.
-state_tasks_from_verify() {
-  local num="$1" verify_log="$2" n verdict line
-  [ -f "$verify_log" ] || return 0
+# O Codex pode repetir a mensagem final no mesmo transcript. O gate aceita
+# apenas repeticoes identicas por task; ausencia, task fora da faixa e conflito
+# continuam sendo falhas para nao mascarar um veredito ambiguo.
+declare -A VERIFY_VERDICTS=()
+VERIFY_VERDICTS_LOG=""
+VERIFY_VERDICTS_EXPECTED=""
+VERIFY_VERDICTS_READY=0
+VERIFY_VERDICTS_REASON=""
+
+parse_verify_verdicts() {
+  local verify_log="$1" expected="$2" line raw_num num verdict i seen=0
+
+  VERIFY_VERDICTS=()
+  VERIFY_VERDICTS_LOG="$verify_log"
+  VERIFY_VERDICTS_EXPECTED="$expected"
+  VERIFY_VERDICTS_READY=0
+  VERIFY_VERDICTS_REASON=""
+
+  [ -f "$verify_log" ] || {
+    VERIFY_VERDICTS_REASON="o log do verificador nao existe"
+    return 1
+  }
+
   while IFS= read -r line; do
-    n=$(sed -E 's/^TASK ([0-9]+):.*/\1/' <<< "$line")
-    verdict=$(sed -E 's/^TASK [0-9]+: ([A-Z]+).*/\1/' <<< "$line")
-    [ -n "${TK_STATUS[$num:$n]+x}" ] || continue
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ "$line" =~ ^TASK[[:space:]]+([0-9]+):[[:space:]]+(DONE|INCOMPLETE) ]] || continue
+
+    raw_num="${BASH_REMATCH[1]}"
+    verdict="${BASH_REMATCH[2]}"
+    num=$((10#$raw_num))
+    seen=1
+
+    if [ "$num" -lt 1 ] || [ "$num" -gt "$expected" ]; then
+      VERIFY_VERDICTS_REASON="o verificador emitiu a task $raw_num, mas a fase possui tasks de 1 a $expected"
+      return 1
+    fi
+
+    if [ -n "${VERIFY_VERDICTS[$num]+x}" ] && [ "${VERIFY_VERDICTS[$num]}" != "$verdict" ]; then
+      VERIFY_VERDICTS_REASON="a task $num recebeu vereditos conflitantes (${VERIFY_VERDICTS[$num]} e $verdict)"
+      return 1
+    fi
+
+    VERIFY_VERDICTS[$num]="$verdict"
+  done < "$verify_log"
+
+  if [ "$seen" -eq 0 ]; then
+    VERIFY_VERDICTS_REASON="o verificador nao emitiu nenhuma linha 'TASK <n>: DONE|INCOMPLETE'"
+    return 1
+  fi
+
+  for ((i = 1; i <= expected; i++)); do
+    if [ -z "${VERIFY_VERDICTS[$i]+x}" ]; then
+      VERIFY_VERDICTS_REASON="o verificador nao emitiu veredito para a task $i de $expected"
+      return 1
+    fi
+  done
+
+  VERIFY_VERDICTS_READY=1
+  return 0
+}
+
+normalized_verify_verdicts() {
+  local expected="$1" i
+  for ((i = 1; i <= expected; i++)); do
+    printf 'TASK %s: %s\n' "$i" "${VERIFY_VERDICTS[$i]}"
+  done
+}
+
+# O veredito normalizado do gate 3 e a verdade sobre cada task: sobrepoe o que
+# a sessao achou que fez.
+state_tasks_from_verify() {
+  local num="$1" verify_log="$2" expected="${TK_COUNT[$1]:-0}" i verdict
+  [ -f "$verify_log" ] || return 0
+
+  if [ "$VERIFY_VERDICTS_READY" -ne 1 ] \
+    || [ "$VERIFY_VERDICTS_LOG" != "$verify_log" ] \
+    || [ "$VERIFY_VERDICTS_EXPECTED" != "$expected" ]; then
+    parse_verify_verdicts "$verify_log" "$expected" || return 0
+  fi
+
+  for ((i = 1; i <= expected; i++)); do
+    verdict="${VERIFY_VERDICTS[$i]}"
     case "$verdict" in
-      DONE)       TK_STATUS[$num:$n]="done" ;;
-      INCOMPLETE) TK_STATUS[$num:$n]="incomplete" ;;
+      DONE)       TK_STATUS[$num:$i]="done" ;;
+      INCOMPLETE) TK_STATUS[$num:$i]="incomplete" ;;
     esac
-  done < <(sed 's/^[[:space:]]*//' "$verify_log" | grep -E '^TASK [0-9]+: (DONE|INCOMPLETE)' || true)
+  done
   state_flush
 }
 
@@ -1714,21 +1849,14 @@ gate3_independent_verify() {
   prompt_file=$(build_verify_prompt "$phase_file" "$cycle")
   run_engine "$prompt_file" "$verify_log" verify || true
 
-  local task_lines
-  task_lines=$(sed 's/^[[:space:]]*//' "$verify_log" | grep -E '^TASK [0-9]+: (DONE|INCOMPLETE)' || true)
-
-  local parsed
-  parsed=$(printf '%s' "$task_lines" | grep -c . || true)
-
-  if [ "$parsed" -eq 0 ]; then
-    GATE_CAUSE="O verificador independente nao emitiu nenhuma linha 'TASK <n>: DONE|INCOMPLETE' — nao foi possivel confirmar que a fase esta completa. Ultimas linhas do verificador:"$'\n'"$(tail -n 40 "$verify_log")"
+  if ! parse_verify_verdicts "$verify_log" "$expected"; then
+    GATE_CAUSE="O verificador independente publicou vereditos invalidos: $VERIFY_VERDICTS_REASON. Ultimas linhas do verificador:"$'\n'"$(tail -n 40 "$verify_log")"
     return 1
   fi
 
-  if [ "$parsed" -ne "$expected" ]; then
-    GATE_CAUSE="O verificador cobriu $parsed de $expected tasks — cobertura incompleta. Linhas emitidas:"$'\n'"$task_lines"
-    return 1
-  fi
+  local task_lines parsed
+  task_lines=$(normalized_verify_verdicts "$expected")
+  parsed="$expected"
 
   local incomplete
   incomplete=$(printf '%s\n' "$task_lines" | grep 'INCOMPLETE' || true)

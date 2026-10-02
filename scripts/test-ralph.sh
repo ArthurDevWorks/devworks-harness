@@ -164,6 +164,18 @@ if [ "$verify" -eq 1 ]; then
   if [ "$scenario" = "verify-incomplete-once" ] && [ "$n" -eq 1 ]; then
     echo "TASK 1: INCOMPLETE — o arquivo nao foi criado"
     for i in $(seq 2 "$tasks"); do echo "TASK $i: DONE"; done
+  elif [ "$scenario" = "verify-duplicate" ]; then
+    for i in $(seq 1 "$tasks"); do echo "TASK $i: DONE"; done
+    for i in $(seq 1 "$tasks"); do echo "TASK $i: DONE"; done
+  elif [ "$scenario" = "verify-conflict" ]; then
+    echo "TASK 1: DONE"
+    echo "TASK 1: INCOMPLETE — veredito contraditorio"
+    for i in $(seq 2 "$tasks"); do echo "TASK $i: DONE"; done
+  elif [ "$scenario" = "verify-missing" ]; then
+    echo "TASK 1: DONE"
+  elif [ "$scenario" = "verify-out-of-range" ]; then
+    for i in $(seq 1 "$tasks"); do echo "TASK $i: DONE"; done
+    echo "TASK $((tasks + 1)): DONE"
   else
     for i in $(seq 1 "$tasks"); do echo "TASK $i: DONE"; done
   fi
@@ -511,6 +523,44 @@ if case_enabled verify-incomplete; then
   assert_contains "$d/out.log" "Gate 3 vermelho" "gate 3 reportado vermelho"
   assert_contains "$d/repo/.phases/prompts/phase-01.cycle-2.txt" "TASK 1: INCOMPLETE" "prompt de correcao carrega as tasks incompletas verbatim"
   test -f "$d/repo/.phases/logs/phase-01.verify-1.log" && ok "log do verificador por ciclo" || bad "log do verificador por ciclo"
+fi
+
+# ---------------------------------------------------------------------------
+# 4b. O Codex pode repetir o resultado final: duplicatas identicas por task
+#     devem aprovar, enquanto conflito, ausencia e task extra seguem vermelhos.
+# ---------------------------------------------------------------------------
+if case_enabled verify-duplicate; then
+  header "4b. vereditos duplicados identicos nao reprovam a fase"
+  d=$(new_case verify-duplicate)
+  rc=$(run_ralph "$d" verify-duplicate --engine codex --test-cmd "$d/test.sh" --max-cycles 1)
+  assert_eq 0 "$rc" "exit 0 com vereditos duplicados"
+  assert_not_contains "$d/out.log" "Gate 3 vermelho" "duplicacao nao abre ciclo de correcao"
+  assert_contains "$d/repo/.phases/state/run.tsv" "$(printf 'TASK\t1\t1\tdone')" "estado usa task normalizada"
+  assert_contains "$d/repo/.phases/state/run.tsv" "$(printf 'TASK\t1\t2\tdone')" "duas tasks da primeira fase concluidas"
+fi
+
+if case_enabled verify-conflict; then
+  header "4c. veredito conflitante reprova a fase"
+  d=$(new_case verify-conflict)
+  rc=$(run_ralph "$d" verify-conflict --engine codex --test-cmd "$d/test.sh" --max-cycles 1)
+  assert_eq 1 "$rc" "exit 1 com veredito conflitante"
+  assert_contains "$d/out.log" "vereditos conflitantes" "causa do conflito registrada"
+fi
+
+if case_enabled verify-missing; then
+  header "4d. task sem veredito reprova a fase"
+  d=$(new_case verify-missing)
+  rc=$(run_ralph "$d" verify-missing --engine codex --test-cmd "$d/test.sh" --max-cycles 1)
+  assert_eq 1 "$rc" "exit 1 com cobertura ausente"
+  assert_contains "$d/out.log" "nao emitiu veredito para a task 2" "task ausente identificada"
+fi
+
+if case_enabled verify-out-of-range; then
+  header "4e. task fora da faixa reprova a fase"
+  d=$(new_case verify-out-of-range)
+  rc=$(run_ralph "$d" verify-out-of-range --engine codex --test-cmd "$d/test.sh" --max-cycles 1)
+  assert_eq 1 "$rc" "exit 1 com task fora da faixa"
+  assert_contains "$d/out.log" "tasks de 1 a 2" "task extra identificada"
 fi
 
 # ---------------------------------------------------------------------------
