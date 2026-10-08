@@ -1558,6 +1558,8 @@ TASK <n>: INCOMPLETE — <o que falta>
 Regras:
 - <n> e o indice da task na fase, comecando em 1.
 - Uma linha TASK para cada task, sem excecao, sem agrupar.
+- Ignore secoes de validacao manual pendente sem checkbox: elas documentam
+  acompanhamento futuro e nao sao entrega bloqueante desta fase.
 - Nao emita nenhum outro texto alem das linhas TASK.
 - Codigo ausente, TODO, placeholder ou teste faltando => INCOMPLETE.
 - Na duvida, INCOMPLETE.

@@ -73,6 +73,32 @@ possam ser verificados.
   destrutiva) no risco. O Ralph não deve executá-los automaticamente sem a
   aprovação prevista pelo projeto.
 
+## Validação manual sem ambiente de teste
+
+Quando o projeto não dispõe de homologação, cópia recuperável ou identidades de
+teste seguras, não transforme uma validação autenticada, um deploy ou outro
+efeito externo em `- [ ] **Task:**`. Esse formato é uma entrega automática e o
+Gate 3 a reprovará se não houver evidência executável.
+
+- Mantenha nas tasks do `PHASES.md` apenas código, testes locais e revisões que
+  o Ralph possa comprovar sem escrever em serviços externos.
+- Registre a validação funcional futura no `PLAN.md` ou em
+  `MANUAL-VALIDATION.md`, sob `### Validação manual pendente (não bloqueante)`.
+  Use listas comuns, sem checkbox `- [ ]` nem marcador `**Task:**`.
+- Não crie um `PHASES.md` somente para validação manual. Essa é uma pendência de
+  release documentada, não uma fase executável pelo Ralph.
+- Só faça essa validação bloquear uma publicação quando a pessoa desenvolvedora
+  a declarar explicitamente como pré-requisito de release.
+
+Exemplo de registro não executável:
+
+```markdown
+### Validação manual pendente (não bloqueante)
+
+- Em um uso controlado, confirmar que a sessão permanece correta após o save.
+- Registrar apenas IDs técnicos e o resultado, sem dados pessoais ou segredos.
+```
+
 ## Gate de aprovação
 
 Apresente primeiro a decomposição: quantidade de tarefas, arquivos tocados,

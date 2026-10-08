@@ -82,7 +82,7 @@ correção com uma **nova** sessão e a causa real da falha.
 | G0 | A CLI realmente concluiu: OpenCode exige `step_finish` e ausência de evento de erro; Antigravity exige `result.status: SUCCESS`; Codex e Claude mantêm seus contratos anteriores. |
 | G1 | A sessão alterou a árvore? É sinal, não veredito: fase já implementada pode não alterar arquivos. |
 | G2 | O comando de teste do projeto passa, executado pelo Ralph fora da sessão do agente. |
-| G3 | Um verificador independente responde `TASK <n>: DONE/INCOMPLETE` a partir do código real. Esse veredito prevalece sobre a impressão do implementador. |
+| G3 | Um verificador independente responde `TASK <n>: DONE/INCOMPLETE` a partir do código real. Esse veredito prevalece sobre a impressão do implementador. Validações manuais sem ambiente seguro devem ser documentadas sem checkbox, fora das tasks executáveis. |
 
 Quando todos os gates passam, Ralph marca a fase como concluída e preserva as
 alterações acumuladas na árvore. Revise o diff e faça o commit manualmente.
