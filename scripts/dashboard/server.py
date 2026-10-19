@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import signal
+import subprocess
 import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -164,6 +167,210 @@ class RalphStore:
         chunk = data[start : start + MAX_LOG_BYTES]
         return {"offset": start, "next_offset": start + len(chunk), "text": chunk.decode("utf-8", errors="replace"), "truncated": start > offset}
 
+    @staticmethod
+    def _is_pid_alive(pid: int) -> bool:
+        if pid <= 1:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        try:
+            state = subprocess.check_output(
+                ["ps", "-p", str(pid), "-o", "state="],
+                text=True, errors="replace",
+            ).strip()
+            if not state or state.startswith("Z"):
+                return False
+        except Exception:
+            return False
+        return True
+
+    @staticmethod
+    def _get_process_tree(root_pid: int) -> list[int]:
+        ppid_map: dict[int, list[int]] = {}
+        try:
+            out = subprocess.check_output(["ps", "-A", "-o", "pid,ppid"], text=True, errors="replace")
+            for line in out.strip().splitlines()[1:]:
+                parts = line.strip().split()
+                if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                    child_pid, parent_pid = int(parts[0]), int(parts[1])
+                    ppid_map.setdefault(parent_pid, []).append(child_pid)
+        except Exception:
+            return []
+
+        descendants: list[int] = []
+
+        def collect(p: int) -> None:
+            for child in ppid_map.get(p, []):
+                collect(child)
+                descendants.append(child)
+
+        collect(root_pid)
+        return descendants
+
+    def _verify_process_is_ralph(self, pid: int) -> bool:
+        if pid <= 1 or pid == os.getpid():
+            return False
+        lock_file = self.phases / ".lock" / "pid"
+        if lock_file.is_file():
+            try:
+                if lock_file.read_text(encoding="utf-8").strip() == str(pid):
+                    return True
+            except OSError:
+                pass
+        try:
+            cmd = subprocess.check_output(
+                ["ps", "-p", str(pid), "-o", "command="],
+                text=True, errors="replace",
+            ).strip()
+        except Exception:
+            return False
+        cmd_lower = cmd.lower()
+        return "ralph" in cmd_lower or str(self.repo) in cmd
+
+    def _cleanup_stale_lock(self, pid: int | None = None) -> None:
+        lock_dir = self.phases / ".lock"
+        lock_pid_file = lock_dir / "pid"
+        if lock_dir.is_dir():
+            if lock_pid_file.is_file():
+                try:
+                    content = lock_pid_file.read_text(encoding="utf-8").strip()
+                    if pid is None or content == str(pid):
+                        lock_pid_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            try:
+                lock_dir.rmdir()
+            except OSError:
+                pass
+
+    def _mark_run_stopped(self, run_id: str | None) -> None:
+        state_dir = self.state_dir(run_id)
+        if not state_dir or not state_dir.is_dir():
+            return
+        tsv_file = state_dir / "run.tsv"
+        now = str(int(time.time()))
+        if tsv_file.is_file():
+            try:
+                lines = tsv_file.read_text(encoding="utf-8", errors="replace").splitlines()
+                updated_lines: list[str] = []
+                has_ended = False
+                status_updated = False
+                for line in lines:
+                    parts = line.split("\t")
+                    if parts and parts[0] == "META":
+                        if len(parts) >= 3 and parts[1] == "status":
+                            if parts[2] in {"running", "waiting"}:
+                                updated_lines.append("META\tstatus\tstopped")
+                                status_updated = True
+                            else:
+                                updated_lines.append(line)
+                        elif len(parts) >= 2 and parts[1] == "ended":
+                            has_ended = True
+                            if len(parts) == 2 or not parts[2] or parts[2] == "—":
+                                updated_lines.append(f"META\tended\t{now}")
+                            else:
+                                updated_lines.append(line)
+                        else:
+                            updated_lines.append(line)
+                    else:
+                        updated_lines.append(line)
+                if status_updated and not has_ended:
+                    updated_lines.append(f"META\tended\t{now}")
+                tsv_file.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+            except OSError:
+                pass
+        live_file = state_dir / "live.tsv"
+        try:
+            live_file.write_text("ACTIVITY\tExecução encerrada pelo usuário\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def stop_run(self, run_id: str | None = None) -> tuple[bool, str, int | None]:
+        resolved_id = run_id or self.current_id()
+        state = self.run_state(resolved_id)
+        meta = (state.get("run") or {}).get("meta", {})
+
+        lock_file = self.phases / ".lock" / "pid"
+        lock_pid: int | None = None
+        if lock_file.is_file():
+            try:
+                raw = lock_file.read_text(encoding="utf-8").strip()
+                if raw.isdigit():
+                    lock_pid = int(raw)
+            except OSError:
+                pass
+
+        meta_pid: int | None = None
+        raw_meta_pid = meta.get("pid")
+        if raw_meta_pid and str(raw_meta_pid).isdigit():
+            meta_pid = int(raw_meta_pid)
+
+        target_pid = lock_pid or meta_pid
+        is_active_status = meta.get("status") in {"running", "waiting"}
+
+        if target_pid is None:
+            if not is_active_status and not lock_file.is_file():
+                return False, "Nenhuma execução ativa encontrada para encerrar", None
+            return False, "PID da execução não foi encontrado", None
+
+        if not self._is_pid_alive(target_pid):
+            self._cleanup_stale_lock(target_pid)
+            self._mark_run_stopped(resolved_id)
+            return True, f"Execução já havia finalizado (PID {target_pid}). Lock e estado foram limpos.", target_pid
+
+        if not self._verify_process_is_ralph(target_pid):
+            return False, f"Processo PID {target_pid} não confere com execução do Ralph", target_pid
+
+        # 1. Envia SIGTERM aos descendentes e ao processo alvo
+        descendants = self._get_process_tree(target_pid)
+        for child in descendants:
+            try:
+                os.kill(child, signal.SIGTERM)
+            except OSError:
+                pass
+        try:
+            os.kill(target_pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+        # 2. Aguarda até 3 segundos pela saída graciosa
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            if not self._is_pid_alive(target_pid):
+                break
+            time.sleep(0.1)
+
+        # 3. Força com SIGKILL se ainda estiver ativo
+        if self._is_pid_alive(target_pid):
+            for child in self._get_process_tree(target_pid):
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except OSError:
+                    pass
+            try:
+                os.kill(target_pid, signal.SIGKILL)
+            except OSError:
+                pass
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                if not self._is_pid_alive(target_pid):
+                    break
+                time.sleep(0.05)
+
+        self._cleanup_stale_lock(target_pid)
+        self._mark_run_stopped(resolved_id)
+
+        if self._is_pid_alive(target_pid):
+            return False, f"Não foi possível encerrar o processo PID {target_pid}", target_pid
+
+        return True, f"Execução (PID {target_pid}) encerrada com sucesso", target_pid
+
 
 class Handler(SimpleHTTPRequestHandler):
     store: RalphStore
@@ -205,6 +412,25 @@ class Handler(SimpleHTTPRequestHandler):
                 offset = 0
             return self.json(self.store.logs(run_id, offset))
         return self.json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        parts = [unquote(part) for part in parsed.path.split("/") if part]
+        if len(parts) == 4 and parts[:4] == ["api", "v1", "runs", "stop"]:
+            success, message, pid = self.store.stop_run()
+            status = HTTPStatus.OK if success else HTTPStatus.BAD_REQUEST
+            return self.json({"ok": success, "message": message, "pid": pid}, status)
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "runs"] and parts[4] == "stop":
+            run_id = parts[3]
+            if run_id == "current":
+                success, message, pid = self.store.stop_run()
+            elif RUN_ID_RE.fullmatch(run_id):
+                success, message, pid = self.store.stop_run(run_id)
+            else:
+                return self.json({"ok": False, "error": "ID de execução inválido"}, HTTPStatus.BAD_REQUEST)
+            status = HTTPStatus.OK if success else HTTPStatus.BAD_REQUEST
+            return self.json({"ok": success, "message": message, "pid": pid}, status)
+        return self.json({"error": "endpoint not found"}, HTTPStatus.NOT_FOUND)
 
     def translate_path(self, path: str) -> str:
         parsed = urlparse(path).path

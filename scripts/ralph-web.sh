@@ -12,7 +12,7 @@ usage() {
 Uso: scripts/ralph-web.sh [--port PORTA] [caminho-do-repositorio]
 
 Inicia o monitor Ralph em http://127.0.0.1:<porta>. O servidor é local,
-somente leitura e não controla execuções.
+permite acompanhar o estado e encerrar a execução ativa.
 EOF
 }
 
@@ -57,5 +57,5 @@ REPO="$(cd "$REPO" && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Ralph Web: http://127.0.0.1:${PORT}"
-echo "Monitor local e somente leitura. Ctrl-C para encerrar."
+echo "Monitor local Ralph. Ctrl-C para encerrar o monitor."
 exec "${PYTHON_ARCH[@]}" "$PYTHON_BIN" "$SCRIPT_DIR/dashboard/server.py" --repo "$REPO" --port "$PORT"

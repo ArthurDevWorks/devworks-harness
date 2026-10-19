@@ -72,6 +72,38 @@ RALPH_VERIFY_MODEL=meu-modelo \
   ./scripts/ralph.sh --engine opencode
 ```
 
+### Política de modelos por engine
+
+A rota configurável em `config/model-policy.tsv` é aplicada automaticamente
+somente pelo Antigravity (`agy`). Os IDs abaixo foram conferidos com `agy
+models` e podem depender da conta:
+
+| Papel/perfil Antigravity | Primário | Fallbacks |
+|---|---|---|
+| Plan e Task Builder | Gemini 4 Argon High | Claude Opus 5.5 High → Gemini 3.8 Flash High |
+| `routine` | Gemini 3.8 Flash Medium | Flash High → Gemini 4 Argon Medium |
+| `standard` | Gemini 4 Argon Medium | Flash High → Claude Opus 5.5 High |
+| `complex` | Gemini 4 Argon High | Claude Opus 5.5 High → Flash High |
+| Verificação | Claude Sonnet 5.5 High | Gemini 3.8 Flash High |
+
+Para as outras CLIs, a recomendação é usar o seletor do próprio engine:
+
+| Engine | Rotina | Padrão | Planejamento/tarefa difícil |
+|---|---|---|---|
+| Codex | `gpt-6-luna` | `gpt-6.1-sol` | `gpt-6.1-sol` com maior esforço de raciocínio |
+| Claude Code | `haiku` | `sonnet` | `opus` ou `fable` para trabalho longo e complexo |
+| OpenCode | Flash/Luna rápido | Sonnet ou GPT-6.1 Sol | Opus ou Fable |
+
+As recomendações não configuram automaticamente os modelos dessas três CLIs
+no Ralph: atualmente, só o Antigravity recebe rotas e failover de modelo do
+Ralph. No OpenCode, confirme o ID completo `provedor/modelo` com `opencode
+models`; no Claude Code, aliases como `sonnet`, `opus` e `fable` resolvem para
+o modelo mais recente compatível com o provedor. Disponibilidade pode variar
+por plano, provedor e versão do cliente. Consulte os guias oficiais de
+[modelos do Codex](https://developers.openai.com/codex/models),
+[configuração do Claude Code](https://code.claude.com/docs/en/model-config) e
+[modelos do OpenCode](https://opencode.ai/docs/models/).
+
 ## 3. O que o Ralph garante
 
 Cada fase passa pelos quatro gates abaixo. Um gate vermelho cria um ciclo de

@@ -131,15 +131,32 @@ aplica automaticamente os perfis de execução e verificação; para `plan` e
 
 | Papel | Primário | Fallbacks |
 |---|---|---|
-| Plan e Task Builder | Claude Opus 4.6 Thinking | Gemini 3.1 Pro High → Gemini 3.8 Flash High |
-| Execução `routine` | Gemini 3.8 Flash Medium | Flash High → Pro High |
-| Execução `standard` | Gemini 3.8 Flash High | Pro High → Claude Opus |
-| Execução `complex` | Gemini 3.1 Pro High | Claude Opus → Flash High |
-| Verificação | Claude Sonnet 4.6 | Gemini 3.8 Flash High |
+| Plan e Task Builder | Gemini 4 Argon High | Claude Opus 5.5 High → Gemini 3.8 Flash High |
+| Execução `routine` | Gemini 3.8 Flash Medium | Flash High → Gemini 4 Argon Medium |
+| Execução `standard` | Gemini 4 Argon Medium | Flash High → Claude Opus 5.5 High |
+| Execução `complex` | Gemini 4 Argon High | Claude Opus 5.5 High → Flash High |
+| Verificação | Claude Sonnet 5.5 High | Gemini 3.8 Flash High |
 
 Em limite de uso na Antigravity, o Ralph troca para o próximo modelo da rota e
 continua a mesma fase. Falha de teste ou gate vermelho abre um ciclo normal de
 correção; não troca modelo automaticamente.
+
+Para as outras engines, use o seletor e a disponibilidade atual de cada CLI:
+
+| Engine | Trabalho rotineiro | Codificação padrão | Planejamento / tarefas mais difíceis |
+|---|---|---|---|
+| Codex | `gpt-6-luna` | `gpt-6.1-sol` | `gpt-6.1-sol` com esforço de raciocínio maior |
+| Claude Code | `haiku` | `sonnet` | `opus`; use `fable` quando disponível para tarefas longas e difíceis |
+| OpenCode | Modelo Flash/Luna rápido | Sonnet ou GPT-6.1 Sol atual | Opus ou Fable |
+
+São recomendações, não rotas compartilhadas em runtime: atualmente o Ralph
+aplica a política e faz failover automático somente no Antigravity. Codex e
+OpenCode aceitam IDs de modelo específicos do provedor; aliases Claude Code
+como `sonnet`, `opus` e `fable` são resolvidos conforme o provedor escolhido.
+Confirme disponibilidade com o seletor do `codex`, `claude --model` ou
+`opencode models` antes de fixar um ID. Consulte o [guia de modelos do Codex](https://developers.openai.com/codex/models),
+[configuração de modelos do Claude Code](https://code.claude.com/docs/en/model-config)
+e [guia de modelos do OpenCode](https://opencode.ai/docs/models/).
 
 ### Execução, histórico e lock
 
@@ -490,18 +507,18 @@ Com `--dashboard`, as linhas de log do ralph vão para `.phases/logs/ralph.log` 
 
 ## `scripts/ralph-web.sh` — monitor web local
 
-O monitor somente leitura mostra o estado corrente e o histórico do projeto em
-uma interface responsiva inspirada em terminal. Usa Python 3 e
-HTML/CSS/JavaScript estático, escuta apenas no loopback e não oferece CORS nem
-rotas de controle.
+O monitor local mostra o estado corrente e o histórico do projeto em
+uma interface responsiva inspirada em terminal, com botão para encerrar a
+execução ativa com segurança. Usa Python 3 e HTML/CSS/JavaScript estático,
+escuta apenas no loopback e não oferece CORS.
 
 ```bash
 ./scripts/ralph-web.sh /caminho/do/repo
 # Ralph Web: http://127.0.0.1:7331
 ```
 
-Rotas JSON: `/api/v1/runs`, `/api/v1/runs/current`, `/api/v1/runs/{id}` e
-`/api/v1/runs/{id}/logs?after=<offset>`.
+Rotas JSON: `/api/v1/runs`, `/api/v1/runs/current`, `/api/v1/runs/{id}`,
+`/api/v1/runs/{id}/logs?after=<offset>` e `POST /api/v1/runs/stop` (`/api/v1/runs/{id}/stop`).
 
 ### Contrato de formato do input
 

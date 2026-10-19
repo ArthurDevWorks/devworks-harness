@@ -442,6 +442,7 @@ run_status_label() {
     waiting)  printf '%s⏸ Aguardando reset de limite%s' "$C_YELLOW" "$C_RESET" ;;
     finished) printf '%s✓ Concluído%s' "$C_GREEN" "$C_RESET" ;;
     failed)   printf '%s✗ Falhou%s' "$C_RED" "$C_RESET" ;;
+    stopped)  printf '%s⏹ Encerrado%s' "$C_YELLOW" "$C_RESET" ;;
     *)        printf '%s· %s%s' "$C_GREY" "${META[status]:-?}" "$C_RESET" ;;
   esac
 }
@@ -452,6 +453,7 @@ run_status_plain() {
     waiting)  printf '⏸ Aguardando reset de limite' ;;
     finished) printf '✓ Concluído' ;;
     failed)   printf '✗ Falhou' ;;
+    stopped)  printf '⏹ Encerrado' ;;
     *)        printf '· %s' "${META[status]:-?}" ;;
   esac
 }

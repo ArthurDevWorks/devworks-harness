@@ -132,15 +132,32 @@ automatically applies execution and verification profiles; for `plan` and
 
 | Role | Primary | Fallbacks |
 |---|---|---|
-| Plan and Task Builder | Claude Opus 4.6 Thinking | Gemini 3.1 Pro High → Gemini 3.8 Flash High |
-| `routine` execution | Gemini 3.8 Flash Medium | Flash High → Pro High |
-| `standard` execution | Gemini 3.8 Flash High | Pro High → Claude Opus |
-| `complex` execution | Gemini 3.1 Pro High | Claude Opus → Flash High |
-| Verification | Claude Sonnet 4.6 | Gemini 3.8 Flash High |
+| Plan and Task Builder | Gemini 4 Argon High | Claude Opus 5.5 High → Gemini 3.8 Flash High |
+| `routine` execution | Gemini 3.8 Flash Medium | Flash High → Gemini 4 Argon Medium |
+| `standard` execution | Gemini 4 Argon Medium | Flash High → Claude Opus 5.5 High |
+| `complex` execution | Gemini 4 Argon High | Claude Opus 5.5 High → Flash High |
+| Verification | Claude Sonnet 5.5 High | Gemini 3.8 Flash High |
 
 When an Antigravity model reaches its usage limit, Ralph moves to the next
 model in the route and resumes the same phase. A failed test or red gate starts
 a regular fix cycle; it does not automatically switch models.
+
+For other engines, use each CLI's current model selector and availability:
+
+| Engine | Routine work | Standard coding | Planning / hardest tasks |
+|---|---|---|---|
+| Codex | `gpt-6-luna` | `gpt-6.1-sol` | `gpt-6.1-sol` with higher reasoning effort |
+| Claude Code | `haiku` | `sonnet` | `opus`; use `fable` when available for the hardest, longest tasks |
+| OpenCode | Choose a fast Flash/Luna model | Choose a current Sonnet or GPT-6.1 Sol | Choose Opus or Fable |
+
+These are recommendations, not shared runtime routes: Ralph currently passes
+the model policy and automatically fails over only for Antigravity. Codex and
+OpenCode accept provider-specific model IDs; Claude Code aliases such as
+`sonnet`, `opus`, and `fable` resolve according to the selected provider. Check
+availability with `codex`'s model picker, `claude --model`, or `opencode models`
+before pinning an ID. See the [Codex model guide](https://developers.openai.com/codex/models),
+[Claude Code model configuration](https://code.claude.com/docs/en/model-config),
+and [OpenCode model guide](https://opencode.ai/docs/models/).
 
 The read-only web monitor complements `ralph-watch.sh`:
 
@@ -407,17 +424,18 @@ With `--dashboard`, ralph's log lines go to `.phases/logs/ralph.log` (the panel 
 
 ## `scripts/ralph-web.sh` — local web monitor
 
-The read-only monitor shows current state and project history in a responsive,
-terminal-inspired interface. It uses Python 3 plus static HTML/CSS/JavaScript,
-listens only on loopback, and has no CORS or control endpoints.
+The local monitor shows current state and project history in a responsive,
+terminal-inspired interface, and provides a control button to safely terminate
+the active Ralph execution. It uses Python 3 plus static HTML/CSS/JavaScript,
+listens only on loopback, and has no CORS.
 
 ```bash
 ./scripts/ralph-web.sh /path/to/repo
 # Ralph Web: http://127.0.0.1:7331
 ```
 
-JSON endpoints: `/api/v1/runs`, `/api/v1/runs/current`, `/api/v1/runs/{id}`
-and `/api/v1/runs/{id}/logs?after=<offset>`.
+JSON endpoints: `/api/v1/runs`, `/api/v1/runs/current`, `/api/v1/runs/{id}`,
+`/api/v1/runs/{id}/logs?after=<offset>`, and `POST /api/v1/runs/stop` (`/api/v1/runs/{id}/stop`).
 
 
 ### Input format contract

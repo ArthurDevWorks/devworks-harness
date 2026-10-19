@@ -2045,7 +2045,7 @@ stop_dashboard() {
 # sem cursor.
 on_exit() {
   local code=$?
-  if [ -n "${META[status]:-}" ] && [ "${META[status]}" = "running" ]; then
+  if [ -n "${META[status]:-}" ] && { [ "${META[status]}" = "running" ] || [ "${META[status]}" = "waiting" ]; }; then
     META[status]="failed"
     META[ended]="$(date +%s)"
     state_flush

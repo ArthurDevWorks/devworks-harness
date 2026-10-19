@@ -1,4 +1,4 @@
-const statusText={running:'▶ Em execução',waiting:'⏸ Aguardando limite',finished:'✓ Concluído',failed:'✗ Falhou',done:'✓ Concluída',incomplete:'! Incompleta',skipped:'– Pulada',pending:'· Pendente'};
+const statusText={running:'▶ Em execução',waiting:'⏸ Aguardando limite',finished:'✓ Concluído',failed:'✗ Falhou',stopped:'⏹ Encerrado',done:'✓ Concluída',incomplete:'! Incompleta',skipped:'– Pulada',pending:'· Pendente'};
 const $=s=>document.querySelector(s); let selected='current', logOffsets=new Map(), followLogs=true;
 function esc(value){return String(value??'—').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function status(value){return `<span class="${esc(value)}">${statusText[value]||esc(value)}</span>`}
@@ -15,6 +15,11 @@ function render(state){
   $('#current').innerHTML=`<dt>Fase</dt><dd>${current.number?`${current.number} · ${esc(current.title)}`:'—'}</dd><dt>Ciclo</dt><dd>${esc(m.cycle)}/${esc(m.cycle_max)}</dd><dt>Gate</dt><dd>${esc(m.gate)}</dd><dt>Atividade</dt><dd>${esc(m.activity)}</dd><dt>Último erro</dt><dd class="failed">${esc(m.last_error)}</dd>`;
   $('#tasks').innerHTML=phases.flatMap(p=>{const phase=`<tr class="phase ${p.status==='running'?'active':''}"><td>F${esc(p.number)}</td><td>${esc(p.title)}</td><td>${status(p.status)}</td><td>${esc(p.attempt==='0'?'–':p.attempt)}</td><td class="gates">${p.gates.map((g,i)=>`G${i} ${g==='pass'?'✓':g==='fail'?'✗':g==='run'?'⋯':'·'}`).join(' ')}</td></tr>`;const tasks=p.tasks.map(t=>`<tr class="task ${t.status==='running'?'active':''}"><td>T${esc(t.number)}</td><td>↳ ${esc(t.title)}</td><td>${status(t.status)}</td><td>–</td><td>–</td></tr>`);return[phase,...tasks]}).join('');
   $('#updated').textContent=`Atualizado ${new Date(state.updated_at*1000).toLocaleTimeString()}`;
+  const canStop = m.status === 'running' || m.status === 'waiting';
+  const stopBtn = $('#stop-run');
+  if (stopBtn && !stopBtn.dataset.busy) {
+    stopBtn.style.display = canStop ? 'inline-block' : 'none';
+  }
 }
 function duration(start,end){if(!start)return'—';let s=Math.max(0,(Number(end)||Math.floor(Date.now()/1000))-Number(start));const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h}h ${m}m`:`${m}m ${s%60}s`}
 function nearLogEnd(){const logs=$('#logs');return logs.scrollHeight-logs.scrollTop-logs.clientHeight<40}
@@ -27,5 +32,27 @@ $('#runs').addEventListener('change',e=>{selected=e.target.value;$('#logs').text
 $('#logs').addEventListener('scroll',()=>{if(followLogs&&!nearLogEnd())setFollowLogs(false);else if(!followLogs&&nearLogEnd())setFollowLogs(true)});
 $('#follow-logs').addEventListener('click',()=>setFollowLogs(!followLogs));
 $('#jump-logs').addEventListener('click',()=>setFollowLogs(true));
+$('#stop-run')?.addEventListener('click',async()=>{
+  if(!confirm('Deseja realmente encerrar a execução do Ralph?'))return;
+  const btn=$('#stop-run');
+  btn.dataset.busy='true';
+  btn.disabled=true;
+  btn.textContent='Encerrando…';
+  try{
+    const target=selected==='current'?'current':encodeURIComponent(selected);
+    const res=await fetch(`/api/v1/runs/${target}/stop`,{method:'POST',headers:{'Content-Type':'application/json'}});
+    const data=await res.json();
+    if(!res.ok){throw new Error(data.message||data.error||'Erro ao encerrar')}
+    $('#notice').textContent=data.message||'Execução encerrada.';
+    delete btn.dataset.busy;
+    btn.textContent='Encerrar Ralph';
+    await refresh();
+  }catch(err){
+    $('#notice').textContent=`Falha ao encerrar: ${err.message}`;
+    delete btn.dataset.busy;
+    btn.disabled=false;
+    btn.textContent='Encerrar Ralph';
+  }
+});
 $('#logs').dataset.placeholder='true';
 refresh();setInterval(refresh,1000);

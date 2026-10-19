@@ -339,16 +339,16 @@ def build_complete_story() -> list:
 
     story += section("6", "Política de modelos do Antigravity", "QUALIDADE ONDE IMPORTA; VELOCIDADE NO VOLUME")
     story += [
-        para("A política inicial reserva Claude Opus e Gemini 3.1 Pro High para decisões pesadas. Gemini 3.8 Flash atende a execução recorrente. Os nomes são identificadores reais da CLI e podem mudar; confirme periodicamente com agy models."),
+        para("Gemini 4 Argon atende planejamento e execução complexa; Gemini 3.8 Flash cobre execução recorrente. Claude Opus 5.5 e Sonnet 5.5 são fallbacks e modelos de verificação. Os IDs são validados com agy models e podem variar por conta."),
         grid(
             ["Papel/perfil", "Primário", "Fallback 1", "Fallback 2"],
             [
-                ["Plan", "Claude Opus 4.6 Thinking", "Gemini 3.1 Pro High", "Gemini 3.8 Flash High"],
-                ["Task Builder", "Claude Opus 4.6 Thinking", "Gemini 3.1 Pro High", "Gemini 3.8 Flash High"],
-                ["Execução routine", "Gemini 3.8 Flash Medium", "Gemini 3.8 Flash High", "Gemini 3.1 Pro High"],
-                ["Execução standard", "Gemini 3.8 Flash High", "Gemini 3.1 Pro High", "Claude Opus 4.6 Thinking"],
-                ["Execução complex", "Gemini 3.1 Pro High", "Claude Opus 4.6 Thinking", "Gemini 3.8 Flash High"],
-                ["Verificação", "Claude Sonnet 4.6", "Gemini 3.8 Flash High", "-"],
+                ["Plan", "Gemini 4 Argon High", "Claude Opus 5.5 High", "Gemini 3.8 Flash High"],
+                ["Task Builder", "Gemini 4 Argon High", "Claude Opus 5.5 High", "Gemini 3.8 Flash High"],
+                ["Execução routine", "Gemini 3.8 Flash Medium", "Gemini 3.8 Flash High", "Gemini 4 Argon Medium"],
+                ["Execução standard", "Gemini 4 Argon Medium", "Gemini 3.8 Flash High", "Claude Opus 5.5 High"],
+                ["Execução complex", "Gemini 4 Argon High", "Claude Opus 5.5 High", "Gemini 3.8 Flash High"],
+                ["Verificação", "Claude Sonnet 5.5 High", "Gemini 3.8 Flash High", "-"],
             ],
             [34, 48, 47, 45],
             font="Tiny",
@@ -389,7 +389,7 @@ def build_complete_story() -> list:
         checklist([
             "Criar o repositório e uma branch inicial.",
             "Escrever ou anexar o PRD com objetivo, público, regras, restrições e critérios de aceite.",
-            "Executar o Plan com Claude Opus; usar Gemini 3.1 Pro High como fallback.",
+            "Executar o Plan com Gemini 4 Argon High; usar Claude Opus 5.5 High como fallback.",
             "Revisar arquitetura, dependências, riscos e ordem das fases.",
             "Escolher a próxima fase e detalhá-la no Task Builder.",
             "Executar com Ralph; perfil standard por padrão, complex quando necessário.",
@@ -588,20 +588,19 @@ def build_complete_story() -> list:
     story += section("17", "Referência rápida", "COPIAR, ADAPTAR E EXECUTAR")
     story += [
         para("Projeto novo", "Sub"),
-        code("PRD -> Plan (Opus / Pro High) -> revisar fases\n-> Task Builder da próxima fase -> revisar PHASES.md\n-> Ralph (Flash / perfil standard) -> gates\n-> validação manual -> commit"),
+        code("PRD -> Plan (Argon 4 / Opus 5.5) -> revisar fases\n-> Task Builder da próxima fase -> revisar PHASES.md\n-> Ralph (engine e perfil adequados) -> gates\n-> validação manual -> commit"),
         para("Projeto legado", "Sub"),
         code("ai-context -> revisar documentação AS IS\n-> Plan da manutenção -> Task Builder\n-> Ralph -> gates -> regressão manual -> commit"),
         para("Comandos Ralph", "Sub"),
         code("./scripts/ralph.sh --engine codex PHASES.md\n./scripts/ralph.sh --engine claude PHASES.md\n./scripts/ralph.sh --engine opencode PHASES.md\n./scripts/ralph.sh --engine antigravity --profile standard PHASES.md"),
         para("Decisão de modelo", "Sub"),
         grid(
-            ["Situação", "Escolha inicial"],
+            ["Engine", "Recomendação inicial"],
             [
-                ["Planejamento e decisões pesadas", "Claude Opus; fallback Gemini 3.1 Pro High"],
-                ["Execução comum", "Gemini 3.8 Flash High"],
-                ["Execução repetitiva", "Gemini 3.8 Flash Medium"],
-                ["Refatoração/arquitetura complexa", "Gemini 3.1 Pro High; fallback Opus"],
-                ["Verificação", "Claude Sonnet; fallback Flash High"],
+                ["Antigravity", "Model policy: Argon 4, Flash 3.8, Claude 5.5"],
+                ["Codex", "GPT-6 Luna para rotina; GPT-6.1 Sol para código e raciocínio"],
+                ["Claude Code", "haiku para rotina; sonnet no dia a dia; opus/fable para tarefas difíceis"],
+                ["OpenCode", "Flash/Luna para rotina; Sonnet/GPT-6.1 Sol ou Opus/Fable conforme tarefa"],
             ],
             [73, 101],
         ),
@@ -610,12 +609,20 @@ def build_complete_story() -> list:
 
     story += section("18", "Fontes e notas de versão", "DOCUMENTAÇÃO CONSULTADA")
     story += [
-        para("As instruções de instalação e autenticação abaixo foram conferidas em documentação oficial. A lista de modelos Antigravity foi também conferida na CLI instalada durante a preparação deste guia."),
+        para("As instruções de instalação e autenticação abaixo foram conferidas em documentação oficial. A rota Antigravity foi conferida com agy models; modelos de outras engines dependem do provedor, do plano e da versão da CLI."),
         source_link("OpenAI - Codex CLI e login com ChatGPT", "https://help.openai.com/en/articles/11381614-api-codex-cli-and-sign-in-with-chatgpt"),
+        Spacer(1, 2 * mm),
+        source_link("OpenAI - modelos do Codex", "https://developers.openai.com/codex/models"),
         Spacer(1, 2 * mm),
         source_link("Anthropic - instalação do Claude Code", "https://docs.anthropic.com/en/docs/claude-code/getting-started"),
         Spacer(1, 2 * mm),
+        source_link("Anthropic - configuração de modelos do Claude Code", "https://code.claude.com/docs/en/model-config"),
+        Spacer(1, 2 * mm),
         source_link("OpenCode - instalação e CLI", "https://opencode.ai/v2/docs"),
+        Spacer(1, 2 * mm),
+        source_link("OpenCode - modelos", "https://opencode.ai/docs/models/"),
+        Spacer(1, 2 * mm),
+        source_link("Google - Gemini 4 Argon", "https://ai.google.dev/gemini-api/docs/models/gemini-4-argon"),
         Spacer(1, 2 * mm),
         source_link("Google - Antigravity CLI, modelos e modo headless", "https://codelabs.developers.google.com/antigravity-cli-hands-on"),
         Spacer(1, 6 * mm),
@@ -624,7 +631,7 @@ def build_complete_story() -> list:
         checklist([
             "As Skills são portáveis por contrato; a interface de chamada ainda varia por engine.",
             "Plan e Task Builder usam a política de modelos como recomendação; a seleção de rota nessas interfaces ainda é manual.",
-            "O failover de modelos está implementado para a engine Antigravity; outras engines mantêm seu próprio modelo configurado.",
+            "O failover de modelos está implementado para a engine Antigravity; Codex, Claude Code e OpenCode mantêm seu próprio modelo configurado.",
             "O dashboard é local e somente leitura.",
         ]),
         Spacer(1, 8 * mm),

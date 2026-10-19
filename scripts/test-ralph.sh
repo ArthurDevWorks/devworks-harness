@@ -868,8 +868,8 @@ if case_enabled new-engine-limit; then
   rc=$(run_ralph "$d" limit-generic --engine antigravity --test-cmd "$d/test.sh" --max-cycles 1)
   assert_eq 0 "$rc" "Antigravity retoma apos limite"
   assert_contains "$d/out.log" "Limite de uso atingido" "limite Antigravity detectado"
-  assert_contains "$d/state/agy_impl_model_history" "gemini-3.8-flash-high" "perfil standard iniciou no Flash High"
-  assert_contains "$d/state/agy_impl_model_history" "gemini-3.1-pro-high" "limite acionou fallback para Pro High"
+  assert_contains "$d/state/agy_impl_model_history" "gemini-4-argon-medium" "perfil standard iniciou no Gemini 4 Argon Medium"
+  assert_contains "$d/state/agy_impl_model_history" "gemini-3.8-flash-high" "limite acionou fallback para Flash High"
   assert_contains "$d/out.log" "Continuando a mesma fase" "fallback preservou a fase corrente"
 fi
 
