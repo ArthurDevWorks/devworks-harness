@@ -94,6 +94,29 @@ normal exige CLI autenticada e valida os quatro Skills antes de escrever.
 No escopo `user`, somente os Skills são instalados; o runtime pertence ao
 projeto.
 
+### Atualização de um projeto já instalado
+
+Use o atualizador a partir de um checkout recente deste repositório. Ele detecta
+a engine registrada no projeto e reaplica somente os Skills e arquivos de
+runtime distribuídos pelo Harness:
+
+```bash
+/caminho/devworks-harness/scripts/update-platform.sh --root /caminho/do/projeto
+```
+
+Instalações antigas que ainda não possuem
+`config/devworks-harness-engine` devem informar a engine uma vez:
+
+```bash
+/caminho/devworks-harness/scripts/update-platform.sh \
+  --platform codex --root /caminho/do/projeto
+```
+
+Use `--check` para validar a instalação sem escrever. O atualizador não executa
+`git pull`: a versão aplicada é sempre a que está disponível no checkout local
+do DEVWORKS Harness. Artefatos do projeto, como `.spec/`, `PHASES.md` e
+`.phases/`, não são alterados.
+
 ## Novidades: DEVWORKS, múltiplos agentes e observabilidade
 
 O Harness agora tem um núcleo de execução independente de fornecedor. Os

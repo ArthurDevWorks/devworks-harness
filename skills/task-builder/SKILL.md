@@ -59,6 +59,9 @@ possam ser verificados.
 
 ## Como quebrar as tarefas
 
+- Cada fase deve conter idealmente de **3 a 5 tarefas focadas**. Fases com mais de 6
+  tarefas devem ser divididas em sub-fases sequenciais (ex: dados/schema → regras de
+  negócio → interface) para garantir ciclos rápidos e blast radius controlado.
 - Cada tarefa deve caber em uma execução focada, ter arquivos previstos e um
   resultado independente de revisão.
 - Ordene pré-requisitos antes de consumidores. Separe migration, regra de
@@ -66,6 +69,10 @@ possam ser verificados.
 - Todo requisito do escopo da fase deve aparecer em `Covers` de ao menos uma
   tarefa. Todo critério do SPEC deve aparecer em uma tarefa ou ser registrado
   como fora da fase.
+- **DNA de Código e Critérios Limpos**: Consulte `config/coding-style-profile.md`.
+  Não crie critérios de aceite que imponham over-engineering (validações redundantes
+  de tipos internos ou queries repetidas). Em projetos Joomla, se a task altera JS/CSS
+  em `media/com_*/`, inclua explicitamente a atualização de versão no `joomla.asset.json`.
 - Para regras, cálculos, permissões, validações, estados e APIs, especifique
   teste automatizado. Para trabalho visual puro, descreva uma validação manual
   objetiva e a referência de design, se houver.

@@ -95,6 +95,28 @@ regular installation requires an authenticated CLI and validates all four
 Skills before writing.
 User scope installs Skills only; the executable runtime is project scoped.
 
+### Updating an existing project installation
+
+Run the updater from a recent checkout of this repository. It detects the
+engine recorded in the target project and reapplies only the Skills and runtime
+files distributed by the Harness:
+
+```bash
+/path/to/devworks-harness/scripts/update-platform.sh --root /path/to/project
+```
+
+Older installations without `config/devworks-harness-engine` must provide the
+engine once:
+
+```bash
+/path/to/devworks-harness/scripts/update-platform.sh \
+  --platform codex --root /path/to/project
+```
+
+Use `--check` to validate without writing. The updater does not run `git pull`:
+it installs the version available in the local DEVWORKS Harness checkout.
+Project artifacts such as `.spec/`, `PHASES.md`, and `.phases/` are untouched.
+
 ## What's new: DEVWORKS, multi-agent workflows, and observability
 
 The harness now has a vendor-neutral execution core. The stable `init`,

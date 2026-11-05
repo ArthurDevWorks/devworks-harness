@@ -47,8 +47,25 @@ entradas são de alto nível: uma fase/release, objetivo, dependências, riscos 
 cobertura. As tarefas pequenas são responsabilidade do `task-builder`.
 
 Uma fase é adequada quando pode ser revisada, validada e commitada como uma
-unidade. A ordem deve respeitar dados/contratos/base antes de interface ou
-fluxos que dependam deles.
+unidade independente. Mantenha as fases enxutas (idealmente de 3 a 5 entregas
+focadas). Evite mega-fases acopladas que aumentam o risco de falhas em cascata.
+A ordem deve respeitar dados/contratos/base antes de interface ou fluxos que
+dependam deles.
+
+## Disciplina de Escopo e Estilo de Código (DNA de Código)
+
+- Consulte `config/coding-style-profile.md` (ou `docs/coding-style-profile.md`)
+  como referência do estilo do desenvolvedor.
+- **Proibido over-engineering nos Critérios de Aceite**: especifique o
+  comportamento funcional esperado, e não microrregras defensivas artificiais
+  (como validações de tipos não escalares em modelos internos ou queries manuais
+  redundantes). A IA deve agregar tipagem estrita, prevenção a SQL Injection e
+  early returns, mas sem inventar complexidade acidental.
+- **Isolamento de validações manuais e decisões pendentes**:
+  Se uma decisão técnica/negócio (`DEC-*`) estiver em `draft` ou se um teste exigir
+  ambiente ao vivo/login autenticado que o runner headless não possui, registre-os
+  como notas em `Validação manual pendente (não bloqueante)`. Nunca condicione
+  a execução automática de uma fase a fatores que o agente não pode verificar.
 
 ## Regras para manutenção em legado
 

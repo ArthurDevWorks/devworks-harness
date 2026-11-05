@@ -106,6 +106,9 @@ if [ "$SCOPE" = "project" ]; then
   cp "$HARNESS_ROOT/scripts/dashboard/server.py" "$TARGET_ROOT/scripts/dashboard/server.py"
   cp "$HARNESS_ROOT/scripts/dashboard/web/"* "$TARGET_ROOT/scripts/dashboard/web/"
   cp "$HARNESS_ROOT/config/model-policy.tsv" "$TARGET_ROOT/config/model-policy.tsv"
+  if [ -f "$HARNESS_ROOT/config/coding-style-profile.md" ]; then
+    cp "$HARNESS_ROOT/config/coding-style-profile.md" "$TARGET_ROOT/config/coding-style-profile.md"
+  fi
   printf '%s\n' "$PLATFORM" > "$TARGET_ROOT/config/devworks-harness-engine"
   chmod +x "$TARGET_ROOT/scripts/ralph.sh" "$TARGET_ROOT/scripts/ralph-web.sh" \
     "$TARGET_ROOT/scripts/ralph-watch.sh" "$TARGET_ROOT/scripts/engines/"*.sh

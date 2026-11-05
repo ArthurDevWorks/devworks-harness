@@ -1016,6 +1016,17 @@ parse_verify_verdicts() {
     return 1
   }
 
+  # Extrai os vereditos das ultimas 150 linhas do log (onde o assistente emite
+  # sua resposta final conclusiva). Isso isola os vereditos finais de eventuais
+  # saidas de comandos shell intermediarios (ex: grep em logs ou planos passados)
+  # que possam ter impresso linhas "TASK <n>:" no corpo da sessao.
+  local tail_source
+  if [ "$(wc -l < "$verify_log")" -gt 150 ]; then
+    tail_source=$(tail -n 150 "$verify_log")
+  else
+    tail_source=$(cat "$verify_log")
+  fi
+
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"
     [[ "$line" =~ ^TASK[[:space:]]+([0-9]+):[[:space:]]+(DONE|INCOMPLETE) ]] || continue
@@ -1036,7 +1047,7 @@ parse_verify_verdicts() {
     fi
 
     VERIFY_VERDICTS[$num]="$verdict"
-  done < "$verify_log"
+  done <<< "$tail_source"
 
   if [ "$seen" -eq 0 ]; then
     VERIFY_VERDICTS_REASON="o verificador nao emitiu nenhuma linha 'TASK <n>: DONE|INCOMPLETE'"
@@ -1400,13 +1411,24 @@ context_preamble() {
 Este projeto pode ser de qualquer linguagem ou framework. NAO assuma nenhuma
 stack. Antes de comecar, LEIA os que existirem, nesta ordem:
 1. AGENTS.md ou CLAUDE.md — convencoes, comandos e regras do projeto
-2. .spec/init/project-description.md — descricao geral do projeto
-3. .spec/init/user-stories.md — user stories
-4. .spec/init/database-schema.md — modelo de dados
-5. os documentos citados no proprio texto da fase (ex: SPEC.md/PLAN.md da feature)
+2. config/coding-style-profile.md (ou docs/coding-style-profile.md) — guia canonico de estilo e DNA de codigo
+3. .spec/init/project-description.md — descricao geral do projeto
+4. .spec/init/user-stories.md — user stories
+5. .spec/init/database-schema.md — modelo de dados
+6. os documentos citados no proprio texto da fase (ex: SPEC.md/PLAN.md da feature)
 Use os comandos de build, teste e execucao definidos por esses documentos e pelo
 tooling ja presente no repositorio. Se o projeto tiver uma ferramenta de memoria
 ou contexto configurada, use-a para entender o historico.
+
+## Diretrizes de Codigo e Engenharia (DNA de Codigo - Arthur Parente)
+- Simplicidade cirurgica: resolva a causa-raiz no ponto exato sem adicionar over-engineering
+- PROIBIDO adicionar validacoes defensivas redundantes em dados internos de models (como is_scalar, !is_bool, filter_var em cascata)
+- PROIBIDO consultas manuais redundantes ao banco antes de chamar metodos nativos que ja fazem o carregamento (ex: query em #__users antes de Factory::getUser())
+- Formato PHP: abertura de chaves em nova linha (\n{) em funcoes, metodos e blocos (estilo Allman); early returns limpos
+- Respeite rigorosamente a indentacao do arquivo tocado (tabs em componentes Joomla legados, 4 espacos em PSR-12/Laravel)
+- Ao alterar JS ou CSS em media/com_*/ no Joomla, E OBRIGATORIO atualizar a versao no joomla.asset.json
+- Use Query Builder com quoteName() e quote()/casting seguro para prevenir SQL Injection
+- Limpeza: nunca comite console.log ou marcadores de debug em codigo final
 PREAMBLE
 
   # O gate 2 roda ESTE comando. Se o agente rodar outro (ex: `php artisan test`
@@ -1558,6 +1580,7 @@ TASK <n>: INCOMPLETE — <o que falta>
 Regras:
 - <n> e o indice da task na fase, comecando em 1.
 - Uma linha TASK para cada task, sem excecao, sem agrupar.
+- NUNCA inspecione, leia ou busque arquivos dentro de .phases/, .spec/ ou logs anteriores. Verifique EXCLUSIVAMENTE o codigo-fonte real da aplicacao.
 - Ignore secoes de validacao manual pendente sem checkbox: elas documentam
   acompanhamento futuro e nao sao entrega bloqueante desta fase.
 - Nao emita nenhum outro texto alem das linhas TASK.
