@@ -38,7 +38,7 @@ Inspect in this order, shallow-first. Prefer manifests and config over reading s
 12. **Env var names** — from `.env.example`/`.env.dist` only.
 13. **README excerpt** — first 60 lines of `README.md` if present.
 14. **Legacy guidance seeds** — full content of `.github/copilot-instructions.md` if present; full content of any NON-owned `CLAUDE.md`/`AGENTS.md` (see ownership probe). These seed the generated tree so hand-written rules are not lost.
-15. **Author & style conventions** — read `config/coding-style-profile.md` if present; otherwise inspect the 5 most recent author commits (`git log -n 5 --oneline` and sample diffs) to capture brace style (Allman vs K&R), indentation (tabs vs spaces), early returns, and commit message style.
+15. **Author & style conventions** — read `config/coding-style-profile.md` if present and record it as declared guidance, not as observed behavior. Inspect the 5 most recent author commits (`git log -n 5 --oneline` and sample diffs) to capture only patterns evidenced in code: formatting, indentation, whitespace between processing stages, control-flow shape, documentation style and commit messages. Distinguish declared guidance from observed conventions in the digest.
 
 ## Ownership probe
 

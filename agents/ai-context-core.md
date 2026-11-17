@@ -42,7 +42,7 @@ A **foreign block** is any region from a line matching `^<[A-Za-z][-A-Za-z0-9]*>
 
 ## Grounding rules
 
-- Every command, tool name, version, and convention comes from the digest. Never invent a command name.
+- Every command, tool name, version, and observed convention comes from the digest. Never invent a command name or describe declared guidance as an observed convention without supporting evidence.
 - No evidence for a section → write the section with what exists; never fabricate filler.
 - `.spec/` content is not an input and must never be cited.
 - Existing generated files are a diff target only — never paraphrase old generated prose as if it were evidence.
@@ -64,7 +64,7 @@ Then a `## Sections` table of contents, then 6 sections, exact literal titles, t
 | # | Literal title | Content source |
 |---|---|---|
 | 1 | `## 1. Build, Lint, Test and Coverage` | `digest.commands` as a Command \| Purpose table. Verbatim commands only. |
-| 2 | `## 2. Code Style & Project Conventions` | `digest.lint_tools` configs + observed conventions. Each rule cites its enforcement (config path, CI step) when one exists; no enforcement → no citation, never invent one. Link `docs/agents/coding_guidelines.md`. |
+| 2 | `## 2. Code Style & Project Conventions` | `digest.lint_tools` configs + observed conventions. Keep declared profile guidance separate from observed conventions; each observed rule cites its enforcement (config path, CI step) when one exists. No enforcement → no citation, never invent one. Link `docs/agents/coding_guidelines.md`. |
 | 3 | `## 3. Agent Communication & Behavioral Guidelines` | ≤3 behavioral bullets. MUST contain `### Never in this repository` (literal, case-sensitive) with ≥1 bullet grounded in CI/lint-enforced rules or seeded legacy guidance — never invented. |
 | 4 | `## 4. Setup, Troubleshooting and Tips` | Prereqs inline, setup commands in `sh` fences from `digest.readme_excerpt`/manifests, troubleshooting as Symptom \| Check table when known issues are documented. |
 | 5 | `## 5. References` | Doc \| Purpose table: README, CONTRIBUTING, other real in-repo docs. Only files that exist. |

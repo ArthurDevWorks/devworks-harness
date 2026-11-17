@@ -24,6 +24,81 @@ class RalphStore:
         self.repo = repo.resolve()
         self.phases = self.repo / ".phases"
 
+    @property
+    def config_path(self) -> Path:
+        return self.repo / "config" / "harness.json"
+
+    def config(self) -> dict:
+        default = {"models": {"implementation": "", "verification": ""},
+                   "limits": {"implementation_minutes": 30, "verification_minutes": 5, "idle_warning_minutes": 5}}
+        try:
+            stored = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return default
+        default.update(stored)
+        return default
+
+    def save_config(self, value: object) -> tuple[bool, str]:
+        if not isinstance(value, dict):
+            return False, "Configuração inválida"
+        models, limits = value.get("models", {}), value.get("limits", {})
+        if not isinstance(models, dict) or not isinstance(limits, dict):
+            return False, "Configuração inválida"
+        def bounded_int(raw: object, fallback: int) -> int:
+            try:
+                return max(0, min(240, int(raw)))
+            except (TypeError, ValueError):
+                return fallback
+
+        normalized = {"models": {"implementation": str(models.get("implementation", ""))[:160], "verification": str(models.get("verification", ""))[:160]},
+                      "limits": {key: bounded_int(limits.get(key), fallback) for key, fallback in
+                                 (("implementation_minutes", 30), ("verification_minutes", 5), ("idle_warning_minutes", 5))}}
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            self.config_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            return False, "Não foi possível salvar a configuração"
+        return True, "Configuração salva"
+
+    def inputs(self) -> list[str]:
+        root = self.repo / ".spec"
+        if not root.is_dir():
+            return []
+        return [str(path.relative_to(self.repo)) for path in root.rglob("PHASES.md") if path.is_file()]
+
+    def start_run(self, value: object) -> tuple[bool, str]:
+        if self.current_id():
+            state = self.run_state()
+            if state.get("run", {}).get("meta", {}).get("status") in {"running", "waiting"}:
+                return False, "Já existe uma execução ativa"
+        if not isinstance(value, dict):
+            return False, "Pedido inválido"
+        input_path = value.get("input", "")
+        if not isinstance(input_path, str):
+            return False, "Input inválido"
+        candidate = (self.repo / input_path).resolve()
+        spec_root = (self.repo / ".spec").resolve()
+        if candidate != spec_root and spec_root not in candidate.parents:
+            return False, "O input deve estar dentro de .spec"
+        if not candidate.exists():
+            return False, "Input não encontrado"
+        engine = value.get("engine")
+        if engine not in {"codex", "claude", "opencode", "antigravity"}:
+            return False, "Escolha uma engine para esta execução"
+        config = self.config()
+        command = [str(self.repo / "scripts" / "ralph.sh"), "--engine", engine, str(candidate)]
+        env = os.environ.copy()
+        if config["models"]["implementation"]: env["RALPH_IMPLEMENTATION_MODEL"] = config["models"]["implementation"]
+        if config["models"]["verification"]: env["RALPH_VERIFY_MODEL"] = config["models"]["verification"]
+        env["RALPH_IMPLEMENTATION_TIMEOUT"] = str(config["limits"]["implementation_minutes"] * 60)
+        env["RALPH_VERIFICATION_TIMEOUT"] = str(config["limits"]["verification_minutes"] * 60)
+        try:
+            subprocess.Popen(command, cwd=self.repo, env=env, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return False, "Não foi possível iniciar o Ralph"
+        return True, "Execução iniciada"
+
     def current_id(self) -> str | None:
         pointer = self.phases / "current"
         try:
@@ -391,6 +466,12 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         parts = [unquote(part) for part in parsed.path.split("/") if part]
+        if parts == ["api", "v1", "config"]:
+            return self.json(self.store.config())
+        if parts == ["api", "v1", "inputs"]:
+            return self.json({"inputs": self.store.inputs()})
+        if parts == ["api", "v1", "engines"]:
+            return self.json({"engines": ["codex", "claude", "opencode", "antigravity"]})
         if parts[:3] != ["api", "v1", "runs"]:
             return super().do_GET()
         query = parse_qs(parsed.query)
@@ -416,6 +497,17 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         parts = [unquote(part) for part in parsed.path.split("/") if part]
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        except (UnicodeDecodeError, ValueError):
+            return self.json({"ok": False, "error": "JSON inválido"}, HTTPStatus.BAD_REQUEST)
+        if parts == ["api", "v1", "config"]:
+            success, message = self.store.save_config(body)
+            return self.json({"ok": success, "message": message}, HTTPStatus.OK if success else HTTPStatus.BAD_REQUEST)
+        if parts == ["api", "v1", "runs"]:
+            success, message = self.store.start_run(body)
+            return self.json({"ok": success, "message": message}, HTTPStatus.ACCEPTED if success else HTTPStatus.BAD_REQUEST)
         if len(parts) == 4 and parts[:4] == ["api", "v1", "runs", "stop"]:
             success, message, pid = self.store.stop_run()
             status = HTTPStatus.OK if success else HTTPStatus.BAD_REQUEST

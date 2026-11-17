@@ -21,6 +21,9 @@ escreve código de aplicação, não executa migrations e não faz commits.
    do projeto: preserve texto e identificadores que a pessoa tenha alterado.
 3. Pergunte somente pelo que muda escopo, prioridade, regras de negócio ou
    arquitetura. Registre o que continuar em aberto; não invente decisões.
+4. Quando já existir código, identifique linguagem, framework, versões,
+   ferramentas e convenções nos arquivos reais. Consulte a documentação oficial
+   relevante e não transporte padrões de outra stack para o projeto.
 
 ## Artefatos e ordem
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# ralph-web.sh — monitor web local, somente leitura, para o Ralph.
+# ralph-web.sh — painel web local para configurar e acompanhar o Ralph.
 
 set -euo pipefail
 
@@ -11,8 +11,8 @@ usage() {
   cat <<'EOF'
 Uso: scripts/ralph-web.sh [--port PORTA] [caminho-do-repositorio]
 
-Inicia o monitor Ralph em http://127.0.0.1:<porta>. O servidor é local,
-permite acompanhar o estado e encerrar a execução ativa.
+Inicia o painel Ralph em http://127.0.0.1:<porta>. O servidor é local,
+permite configurar, iniciar, acompanhar e encerrar execuções.
 EOF
 }
 
@@ -57,5 +57,5 @@ REPO="$(cd "$REPO" && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Ralph Web: http://127.0.0.1:${PORT}"
-echo "Monitor local Ralph. Ctrl-C para encerrar o monitor."
+echo "Painel local Ralph. Ctrl-C para encerrar o painel."
 exec "${PYTHON_ARCH[@]}" "$PYTHON_BIN" "$SCRIPT_DIR/dashboard/server.py" --repo "$REPO" --port "$PORT"

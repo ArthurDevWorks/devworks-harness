@@ -145,6 +145,9 @@ if [ "$name" = "agy" ] && [ "$verify" -eq 0 ] && [ -n "$model" ]; then
   echo "$model" > "$state/agy_impl_model"
   echo "$model" >> "$state/agy_impl_model_history"
 fi
+if [ "$verify" -eq 0 ] && [ -n "$model" ]; then
+  echo "$model" > "$state/implementation_model"
+fi
 
 # --- verificador independente ------------------------------------------------
 # Verifica o CODIGO REAL, como o verificador de verdade: sem arquivo de
@@ -176,6 +179,9 @@ if [ "$verify" -eq 1 ]; then
   elif [ "$scenario" = "verify-out-of-range" ]; then
     for i in $(seq 1 "$tasks"); do echo "TASK $i: DONE"; done
     echo "TASK $((tasks + 1)): DONE"
+  elif [ "$scenario" = "verify-blocked" ]; then
+    echo "TASK 1: BLOCKED — o ambiente de verificacao recusou acesso ao entregavel"
+    for i in $(seq 2 "$tasks"); do echo "TASK $i: DONE"; done
   else
     for i in $(seq 1 "$tasks"); do echo "TASK $i: DONE"; done
   fi
@@ -561,6 +567,29 @@ if case_enabled verify-out-of-range; then
   rc=$(run_ralph "$d" verify-out-of-range --engine codex --test-cmd "$d/test.sh" --max-cycles 1)
   assert_eq 1 "$rc" "exit 1 com task fora da faixa"
   assert_contains "$d/out.log" "tasks de 1 a 2" "task extra identificada"
+fi
+
+# ---------------------------------------------------------------------------
+# 4f. Bloqueio operacional encerra a fase sem abrir ciclo de correcao.
+# ---------------------------------------------------------------------------
+if case_enabled verify-blocked; then
+  header "4f. verificador bloqueado nao abre ciclo de correcao"
+  d=$(new_case verify-blocked)
+  rc=$(run_ralph "$d" verify-blocked --engine codex --test-cmd "$d/test.sh" --max-cycles 2)
+  assert_eq 1 "$rc" "exit 1 para bloqueio operacional"
+  assert_contains "$d/out.log" "BLOQUEADA" "fase sinaliza bloqueio"
+  assert_eq 1 "$(cat "$d/state/impl_calls")" "nao abre nova sessao de correcao"
+fi
+
+# ---------------------------------------------------------------------------
+# 4g. O modelo de implementacao chega a engines que nao usam a politica agy.
+# ---------------------------------------------------------------------------
+if case_enabled implementation-model; then
+  header "4g. modelo de implementacao e repassado ao Codex"
+  d=$(new_case implementation-model)
+  rc=$(RALPH_IMPLEMENTATION_MODEL=chosen-model run_ralph "$d" ok --engine codex --test-cmd "$d/test.sh")
+  assert_eq 0 "$rc" "exit 0"
+  assert_eq "chosen-model" "$(cat "$d/state/implementation_model")" "modelo chegou a implementacao"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1680,6 +1709,29 @@ if case_enabled watch-frame; then
   else
     ok "tmux ausente — integracao do quadro pulada"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# 32. Perfil universal: os prompts de implementacao, correcao e verificacao
+#     orientam todas as engines sem impor PHP, Joomla ou outra stack.
+# ---------------------------------------------------------------------------
+if case_enabled universal-style-profile; then
+  header "32. perfil universal chega a todos os prompts"
+  d=$(new_case universal-style-profile)
+  rc=$(run_ralph "$d" verify-incomplete-once --engine claude --test-cmd "$d/test.sh" --max-cycles 2)
+  assert_eq 0 "$rc" "exit 0 apos a correcao"
+
+  impl_prompt="$d/repo/.phases/prompts/phase-01.cycle-1.txt"
+  fix_prompt="$d/repo/.phases/prompts/phase-01.cycle-2.txt"
+  verify_prompt="$d/repo/.phases/prompts/phase-01.verify-1.txt"
+
+  assert_contains "$impl_prompt" "documentacao oficial" "implementacao consulta documentacao oficial"
+  assert_contains "$impl_prompt" "condicoes curtas e legiveis" "implementacao recebe regra de legibilidade"
+  assert_contains "$fix_prompt" "Nunca imponha convencoes de outra stack" "correcao preserva agnosticismo de stack"
+  assert_contains "$verify_prompt" "Nao imponha sintaxe ou convencoes" "verificacao respeita a stack do projeto"
+  assert_not_contains "$impl_prompt" "Formato PHP" "prompt nao impoe formato PHP"
+  assert_not_contains "$impl_prompt" "Query Builder" "prompt nao impoe API de banco"
+  assert_not_contains "$impl_prompt" "Joomla" "prompt nao impoe convencao Joomla"
 fi
 
 # ---------------------------------------------------------------------------

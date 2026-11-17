@@ -7,13 +7,15 @@ adapter_usage_pattern() { printf '%s' 'usage limit reached|hit your (session|usa
 
 adapter_run_engine_once() {
   local prompt_file="$1" log_file="$2" mode="$3" rc=0 quiet=0
+  local -a limiter=()
+  if [ "${RALPH_SESSION_TIMEOUT_SECONDS:-0}" -gt 0 ] && command -v timeout >/dev/null 2>&1; then limiter=(timeout "$RALPH_SESSION_TIMEOUT_SECONDS"); fi
   if [[ "$mode" == "verify" ]]; then
-    env -u CLAUDECODE claude --dangerously-skip-permissions "${ENGINE_MODEL_ARGS[@]}" \
+    "${limiter[@]}" env -u CLAUDECODE claude --dangerously-skip-permissions "${ENGINE_MODEL_ARGS[@]}" \
       -p "$(cat "$prompt_file")" --allowedTools "Read,Glob,Grep" --output-format text \
       < /dev/null 2>&1 | tee "$log_file" || rc=$?
   else
     $DASHBOARD && quiet=1
-    if env -u CLAUDECODE claude --dangerously-skip-permissions -p "$(cat "$prompt_file")" \
+    if "${limiter[@]}" env -u CLAUDECODE claude --dangerously-skip-permissions "${ENGINE_MODEL_ARGS[@]}" -p "$(cat "$prompt_file")" \
          --output-format stream-json --verbose < /dev/null 2>&1 | tee "$log_file" \
          | stream_watch "$LIVE_STATE" "${RALPH_PHASE_NUM:-0}" "$quiet" "$CURRENT_PHASE_FILE"; then rc=0; else rc=$?; fi
   fi

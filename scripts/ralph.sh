@@ -110,6 +110,8 @@
 #   RALPH_LIMIT_WAIT_DEFAULT fallback de espera em segundos (default: 1800)
 #   RALPH_LIMIT_BUFFER       segundos extras apos o reset (default: 60)
 #   RALPH_ANTIGRAVITY_TIMEOUT timeout do agy por sessao (default: 30m)
+#   RALPH_IMPLEMENTATION_TIMEOUT segundos maximos por sessao de implementacao (default: 1800; 0 desliga)
+#   RALPH_VERIFICATION_TIMEOUT  segundos maximos por sessao de verificacao (default: 300; 0 desliga)
 #
 # Exportadas para hooks (ex: notify-n8n.sh) durante cada sessao de engine:
 #   RALPH_ENGINE             codex | claude | opencode | antigravity
@@ -185,16 +187,27 @@ MAX_LIMIT_WAITS="${RALPH_MAX_LIMIT_WAITS:-20}"
 LIMIT_WAIT_DEFAULT="${RALPH_LIMIT_WAIT_DEFAULT:-1800}"
 LIMIT_BUFFER="${RALPH_LIMIT_BUFFER:-60}"
 ANTIGRAVITY_TIMEOUT="${RALPH_ANTIGRAVITY_TIMEOUT:-30m}"
+IMPLEMENTATION_TIMEOUT="${RALPH_IMPLEMENTATION_TIMEOUT:-1800}"
+VERIFICATION_TIMEOUT="${RALPH_VERIFICATION_TIMEOUT:-300}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_POLICY="${RALPH_MODEL_POLICY:-$SCRIPT_DIR/../config/model-policy.tsv}"
-DEFAULT_ENGINE_FILE="$SCRIPT_DIR/../config/devworks-harness-engine"
+HARNESS_CONFIG="$SCRIPT_DIR/../config/harness.json"
+
+# A configuracao compartilhada pelo menu e pelo Ralph Web so preenche valores
+# ausentes: flags e variaveis de ambiente continuam sendo a autoridade final.
+if [ -s "$HARNESS_CONFIG" ]; then
+  config_impl_model=$(sed -nE 's/^[[:space:]]*"implementation"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$HARNESS_CONFIG" | head -1)
+  config_verify_model=$(sed -nE 's/^[[:space:]]*"verification"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$HARNESS_CONFIG" | head -1)
+  config_impl_minutes=$(sed -nE 's/^[[:space:]]*"implementation_minutes"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$HARNESS_CONFIG" | head -1)
+  config_verify_minutes=$(sed -nE 's/^[[:space:]]*"verification_minutes"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$HARNESS_CONFIG" | head -1)
+  [ -z "$IMPLEMENTATION_MODEL" ] && [ -n "$config_impl_model" ] && IMPLEMENTATION_MODEL="$config_impl_model"
+  [ -z "${RALPH_VERIFY_MODEL:-}" ] && [ -n "$config_verify_model" ] && VERIFY_MODEL="$config_verify_model"
+  [ -z "${RALPH_IMPLEMENTATION_TIMEOUT:-}" ] && [ -n "$config_impl_minutes" ] && IMPLEMENTATION_TIMEOUT=$((config_impl_minutes * 60))
+  [ -z "${RALPH_VERIFICATION_TIMEOUT:-}" ] && [ -n "$config_verify_minutes" ] && VERIFICATION_TIMEOUT=$((config_verify_minutes * 60))
+fi
 
 if [ -z "$ENGINE" ]; then
-  if [ -s "$DEFAULT_ENGINE_FILE" ]; then
-    ENGINE="$(sed -n '1p' "$DEFAULT_ENGINE_FILE" | tr -d '[:space:]')"
-  else
-    ENGINE="codex"
-  fi
+  ENGINE="codex"
 fi
 
 TEST_CMD=""
@@ -608,7 +621,7 @@ preflight_checks() {
     : # definido pela politica de modelos
   elif [ -n "${RALPH_VERIFY_MODEL:-}" ]; then
     VERIFY_MODEL="$RALPH_VERIFY_MODEL"
-  elif [[ "$ENGINE" == "claude" ]]; then
+  elif [[ "$ENGINE" == "claude" ]] && [ -z "$VERIFY_MODEL" ]; then
     VERIFY_MODEL="sonnet"
   fi
 
@@ -1001,6 +1014,7 @@ VERIFY_VERDICTS_LOG=""
 VERIFY_VERDICTS_EXPECTED=""
 VERIFY_VERDICTS_READY=0
 VERIFY_VERDICTS_REASON=""
+GATE_OPERATIONAL=0
 
 parse_verify_verdicts() {
   local verify_log="$1" expected="$2" line raw_num num verdict i seen=0
@@ -1029,7 +1043,7 @@ parse_verify_verdicts() {
 
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"
-    [[ "$line" =~ ^TASK[[:space:]]+([0-9]+):[[:space:]]+(DONE|INCOMPLETE) ]] || continue
+    [[ "$line" =~ ^TASK[[:space:]]+([0-9]+):[[:space:]]+(DONE|INCOMPLETE|BLOCKED) ]] || continue
 
     raw_num="${BASH_REMATCH[1]}"
     verdict="${BASH_REMATCH[2]}"
@@ -1050,7 +1064,7 @@ parse_verify_verdicts() {
   done <<< "$tail_source"
 
   if [ "$seen" -eq 0 ]; then
-    VERIFY_VERDICTS_REASON="o verificador nao emitiu nenhuma linha 'TASK <n>: DONE|INCOMPLETE'"
+    VERIFY_VERDICTS_REASON="o verificador nao emitiu nenhuma linha 'TASK <n>: DONE|INCOMPLETE|BLOCKED'"
     return 1
   fi
 
@@ -1416,19 +1430,36 @@ stack. Antes de comecar, LEIA os que existirem, nesta ordem:
 4. .spec/init/user-stories.md — user stories
 5. .spec/init/database-schema.md — modelo de dados
 6. os documentos citados no proprio texto da fase (ex: SPEC.md/PLAN.md da feature)
+Identifique nos arquivos reais a linguagem, o framework, as versoes, os
+formatadores, os linters e os padroes locais. Antes de escolher uma API,
+estrutura ou convencao que dependa da stack, consulte a documentacao oficial da
+versao identificada. Se ela nao estiver acessivel, registre a limitacao e use
+somente as evidencias locais verificadas. Compare a mudanca com pelo menos um
+trecho semelhante quando ele existir.
+
 Use os comandos de build, teste e execucao definidos por esses documentos e pelo
 tooling ja presente no repositorio. Se o projeto tiver uma ferramenta de memoria
 ou contexto configurada, use-a para entender o historico.
 
-## Diretrizes de Codigo e Engenharia (DNA de Codigo - Arthur Parente)
-- Simplicidade cirurgica: resolva a causa-raiz no ponto exato sem adicionar over-engineering
-- PROIBIDO adicionar validacoes defensivas redundantes em dados internos de models (como is_scalar, !is_bool, filter_var em cascata)
-- PROIBIDO consultas manuais redundantes ao banco antes de chamar metodos nativos que ja fazem o carregamento (ex: query em #__users antes de Factory::getUser())
-- Formato PHP: abertura de chaves em nova linha (\n{) em funcoes, metodos e blocos (estilo Allman); early returns limpos
-- Respeite rigorosamente a indentacao do arquivo tocado (tabs em componentes Joomla legados, 4 espacos em PSR-12/Laravel)
-- Ao alterar JS ou CSS em media/com_*/ no Joomla, E OBRIGATORIO atualizar a versao no joomla.asset.json
-- Use Query Builder com quoteName() e quote()/casting seguro para prevenir SQL Injection
-- Limpeza: nunca comite console.log ou marcadores de debug em codigo final
+## Diretrizes universais de codigo e engenharia
+- Resolva a causa-raiz com a menor mudanca necessaria; nao introduza camadas,
+  validacoes, consultas ou dependencias redundantes.
+- Mantenha condicoes curtas e legiveis. Extraia valores ou verificacoes nomeadas
+  e divida condicoes independentes sem mudar ordem, logica ou efeitos colaterais.
+- Respeite a indentacao, o formatador e o estilo do arquivo tocado. Separe por
+  linhas em branco as etapas de obtencao, transformacao, decisao, efeito e retorno.
+- Toda funcao nova deve receber uma breve descricao no formato adotado pelo
+  projeto. Nao crie funcao intermediaria que apenas encaminha uma chamada, salvo
+  quando ela preservar contrato, responsabilidade, politica ou tratamento de erro.
+- Prepare valores, objetos e colecoes antes das chamadas; evite expressoes longas
+  ou estruturas montadas inline como argumentos quando isso reduzir a clareza.
+- Evite break, continue e saltos equivalentes; use-os apenas quando a alternativa
+  for menos clara ou mais propensa a erro.
+- Alinhe atribuicoes e associacoes de mapas/arrays somente quando a linguagem, o
+  formatador e o estilo local permitirem.
+- Nunca imponha convencoes de outra stack. Frameworks, geradores e ferramentas
+  encontrados no projeto definem seus nomes, estruturas, APIs e requisitos.
+- Remova depuracao temporaria antes de finalizar e execute as validacoes disponiveis.
 PREAMBLE
 
   # O gate 2 roda ESTE comando. Se o agente rodar outro (ex: `php artisan test`
@@ -1570,17 +1601,30 @@ RALPH_VERIFY
 Voce e um verificador independente. NAO escreva, edite ou crie nenhum arquivo.
 Seu unico trabalho e ler o codigo real e dizer o que esta feito e o que nao esta.
 
+Confira tambem se a implementacao relacionada a cada task respeita as regras
+locais e o perfil de estilo: stack descoberta antes da escolha tecnica, padrao
+do projeto, fluxo legivel, funcoes novas documentadas e ausencia de camadas ou
+funcoes intermediarias sem responsabilidade. Nao imponha sintaxe ou convencoes
+de uma stack que nao esteja presente no projeto. Reporte uma violacao concreta
+que impeça a task de atender seu criterio como `INCOMPLETE`.
+
 Para CADA task marcada com `- [ ]` ou `- [x]` na fase abaixo, na ordem em que
 aparecem, confira os acceptance criteria contra o codigo real (arquivos, classes,
 testes, rotas, migrations — o que a task exigir) e emita EXATAMENTE UMA linha:
 
 TASK <n>: DONE
 TASK <n>: INCOMPLETE — <o que falta>
+TASK <n>: BLOCKED — <impedimento operacional verificável>
 
 Regras:
 - <n> e o indice da task na fase, comecando em 1.
 - Uma linha TASK para cada task, sem excecao, sem agrupar.
-- NUNCA inspecione, leia ou busque arquivos dentro de .phases/, .spec/ ou logs anteriores. Verifique EXCLUSIVAMENTE o codigo-fonte real da aplicacao.
+- Use BLOCKED somente quando uma falha de acesso, ferramenta ou ambiente
+  impedir a verificacao; Ralph para a fase sem abrir um ciclo de correcao.
+- Leia os entregaveis exigidos pela fase, inclusive documentos e consultas em
+  .spec/. A existencia do plano nao comprova que a entrega foi realizada.
+- Nao use logs de sessoes anteriores como prova de implementacao. Consulte o
+  resultado do teste desta fase quando necessario para avaliar seus criterios.
 - Ignore secoes de validacao manual pendente sem checkbox: elas documentam
   acompanhamento futuro e nao sao entrega bloqueante desta fase.
 - Nao emita nenhum outro texto alem das linhas TASK.
@@ -1710,12 +1754,22 @@ run_engine() {
 
   export RALPH_ENGINE="$ENGINE"
   export RALPH_PHASE_MAX_ATTEMPTS="$MAX_CYCLES"
+  if [ "$mode" = "verify" ]; then
+    export RALPH_SESSION_TIMEOUT_SECONDS="$VERIFICATION_TIMEOUT"
+  else
+    export RALPH_SESSION_TIMEOUT_SECONDS="$IMPLEMENTATION_TIMEOUT"
+  fi
+  if [ -z "${RALPH_ANTIGRAVITY_TIMEOUT:-}" ] && [ "${RALPH_SESSION_TIMEOUT_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+    ANTIGRAVITY_TIMEOUT="${RALPH_SESSION_TIMEOUT_SECONDS}s"
+  fi
 
   ENGINE_MODEL_ARGS=()
   if [ "$ENGINE" = "antigravity" ]; then
     ACTIVE_MODEL=$(next_available_model "$mode") || ACTIVE_MODEL=""
   elif [[ "$mode" == "verify" ]] && [ -n "$VERIFY_MODEL" ]; then
     ACTIVE_MODEL="$VERIFY_MODEL"
+  elif [[ "$mode" == "impl" ]] && [ -n "$IMPLEMENTATION_MODEL" ]; then
+    ACTIVE_MODEL="$IMPLEMENTATION_MODEL"
   else
     ACTIVE_MODEL=""
   fi
@@ -1841,6 +1895,7 @@ gate2_tests_pass() {
 GATE3_RAN=0
 
 gate3_independent_verify() {
+  GATE_OPERATIONAL=0
   local phase_file="$1" cycle="$2" session_wrote="$3"
   local verify_log="$LOG_DIR/${phase_file%.md}.verify-${cycle}.log"
 
@@ -1872,7 +1927,13 @@ gate3_independent_verify() {
 
   local prompt_file
   prompt_file=$(build_verify_prompt "$phase_file" "$cycle")
-  run_engine "$prompt_file" "$verify_log" verify || true
+  local verify_rc=0
+  run_engine "$prompt_file" "$verify_log" verify || verify_rc=$?
+  if [ "$verify_rc" -ne 0 ]; then
+    GATE_CAUSE="O verificador terminou com codigo $verify_rc; nao ha evidência para corrigir codigo. Ultimas linhas:"$'\n'"$(tail -n 40 "$verify_log")"
+    GATE_OPERATIONAL=1
+    return 1
+  fi
 
   if ! parse_verify_verdicts "$verify_log" "$expected"; then
     GATE_CAUSE="O verificador independente publicou vereditos invalidos: $VERIFY_VERDICTS_REASON. Ultimas linhas do verificador:"$'\n'"$(tail -n 40 "$verify_log")"
@@ -1885,6 +1946,14 @@ gate3_independent_verify() {
 
   local incomplete
   incomplete=$(printf '%s\n' "$task_lines" | grep 'INCOMPLETE' || true)
+
+  local blocked
+  blocked=$(printf '%s\n' "$task_lines" | grep 'BLOCKED' || true)
+  if [ -n "$blocked" ]; then
+    GATE_CAUSE="O verificador foi bloqueado e nao existe base para corrigir codigo:"$'\n'"$blocked"
+    GATE_OPERATIONAL=1
+    return 1
+  fi
 
   if [ -n "$incomplete" ]; then
     GATE_CAUSE="O verificador independente encontrou tasks incompletas:"$'\n'"$incomplete"
@@ -2003,6 +2072,14 @@ run_phase() {
       mark_phase_done "$phase_file"
       state_phase_end "$phase_num" done
       return 0
+    fi
+
+    if [ "$GATE_OPERATIONAL" -eq 1 ]; then
+      local blocked_duration=$(($(date +%s) - phase_start))
+      state_phase_end "$phase_num" failed
+      fail "Phase $phase_num: $phase_title — BLOQUEADA ($(format_duration "$blocked_duration"))"
+      printf '%s\n' "$GATE_CAUSE" | head -n 20 | sed 's/^/    /'
+      return 1
     fi
 
     cycle=$((cycle + 1))

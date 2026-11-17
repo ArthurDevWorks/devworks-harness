@@ -108,7 +108,7 @@ Under AS IS, ≥3 numbered pattern headings:
 ### 3. <pattern name>
 ```
 
-Each: 1-line rationale + enforcement citation when it exists ("enforced by `phpstan.neon` level 8", "ESLint `no-unused-vars`"). No enforcement → no citation. Pull from `config/coding-style-profile.md` (when present), lint configs, `.editorconfig`, pre-commit hooks, and patterns verified in recent commits and ≥2 source files (such as Allman brace placement `\n{`, indentation fidelity, early returns, and anti-overengineering). Never invent a pattern.
+Each: 1-line rationale + enforcement citation when it exists ("enforced by `phpstan.neon` level 8", "ESLint `no-unused-vars`"). No enforcement → no citation. Treat `config/coding-style-profile.md` as declared guidance and label it as such. Report an observed convention only when lint configs, `.editorconfig`, pre-commit hooks, recent commits or ≥2 source files support it. Never invent a pattern or claim that declared guidance is already implemented.
 
 ### `domain_rules.md` — first line `# Domain Rules`
 

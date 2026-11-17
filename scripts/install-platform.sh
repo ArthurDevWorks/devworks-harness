@@ -10,7 +10,7 @@ ROOT=""
 
 usage() {
   cat <<'EOF'
-Uso: scripts/install-platform.sh --platform codex|claude|opencode|antigravity [--scope project|user] [--root DIR] [--check]
+Uso: scripts/install-platform.sh --platform codex|claude|opencode|antigravity|all [--scope project|user] [--root DIR] [--check]
 
 Instala os Skills canônicos init, plan, task-builder e ai-context. No escopo
 project, instala também scripts/ralph.sh, scripts/ralph-web.sh,
@@ -34,8 +34,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-case "$PLATFORM" in codex|claude|opencode|antigravity) ;; *) usage >&2; exit 2 ;; esac
+case "$PLATFORM" in codex|claude|opencode|antigravity|all) ;; *) usage >&2; exit 2 ;; esac
 case "$SCOPE" in project|user) ;; *) echo "Escopo invalido: $SCOPE" >&2; exit 2 ;; esac
+
+if [ "$PLATFORM" = "all" ]; then
+  for platform in codex claude opencode antigravity; do
+    args=(--platform "$platform" --scope "$SCOPE")
+    [ -n "$ROOT" ] && args+=(--root "$ROOT")
+    [ "$CHECK_ONLY" = true ] && args+=(--check)
+    "$0" "${args[@]}"
+  done
+  exit 0
+fi
 
 BIN="$PLATFORM"
 [ "$PLATFORM" = "antigravity" ] && BIN="agy"
@@ -100,20 +110,21 @@ echo "Skills instalados em $DEST"
 if [ "$SCOPE" = "project" ]; then
   mkdir -p "$TARGET_ROOT/scripts/engines" "$TARGET_ROOT/scripts/dashboard/web" "$TARGET_ROOT/config"
   cp "$HARNESS_ROOT/scripts/ralph.sh" "$TARGET_ROOT/scripts/ralph.sh"
+  cp "$HARNESS_ROOT/scripts/harness.sh" "$TARGET_ROOT/scripts/harness.sh"
   cp "$HARNESS_ROOT/scripts/ralph-web.sh" "$TARGET_ROOT/scripts/ralph-web.sh"
   cp "$HARNESS_ROOT/scripts/ralph-watch.sh" "$TARGET_ROOT/scripts/ralph-watch.sh"
   cp "$HARNESS_ROOT/scripts/engines/"*.sh "$TARGET_ROOT/scripts/engines/"
   cp "$HARNESS_ROOT/scripts/dashboard/server.py" "$TARGET_ROOT/scripts/dashboard/server.py"
   cp "$HARNESS_ROOT/scripts/dashboard/web/"* "$TARGET_ROOT/scripts/dashboard/web/"
   cp "$HARNESS_ROOT/config/model-policy.tsv" "$TARGET_ROOT/config/model-policy.tsv"
+  if [ ! -f "$TARGET_ROOT/config/harness.json" ]; then cp "$HARNESS_ROOT/config/harness.json" "$TARGET_ROOT/config/harness.json"; fi
   if [ -f "$HARNESS_ROOT/config/coding-style-profile.md" ]; then
     cp "$HARNESS_ROOT/config/coding-style-profile.md" "$TARGET_ROOT/config/coding-style-profile.md"
   fi
-  printf '%s\n' "$PLATFORM" > "$TARGET_ROOT/config/devworks-harness-engine"
-  chmod +x "$TARGET_ROOT/scripts/ralph.sh" "$TARGET_ROOT/scripts/ralph-web.sh" \
+  chmod +x "$TARGET_ROOT/scripts/ralph.sh" "$TARGET_ROOT/scripts/harness.sh" "$TARGET_ROOT/scripts/ralph-web.sh" \
     "$TARGET_ROOT/scripts/ralph-watch.sh" "$TARGET_ROOT/scripts/engines/"*.sh
   echo "Runtime instalado em $TARGET_ROOT/scripts"
-  echo "Engine padrao registrada: $PLATFORM"
+  echo "Runtime instalado; escolha a engine em cada execucao com --engine."
 fi
 if [ "$PLATFORM" = "claude" ]; then
   echo "Claude Code: os comandos legados do plugin continuam preservados."

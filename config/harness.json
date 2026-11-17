@@ -1,0 +1,11 @@
+{
+  "models": {
+    "implementation": "",
+    "verification": ""
+  },
+  "limits": {
+    "implementation_minutes": 30,
+    "verification_minutes": 5,
+    "idle_warning_minutes": 5
+  }
+}

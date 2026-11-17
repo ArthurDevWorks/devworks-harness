@@ -1,5 +1,8 @@
 const statusText={running:'▶ Em execução',waiting:'⏸ Aguardando limite',finished:'✓ Concluído',failed:'✗ Falhou',stopped:'⏹ Encerrado',done:'✓ Concluída',incomplete:'! Incompleta',skipped:'– Pulada',pending:'· Pendente'};
 const $=s=>document.querySelector(s); let selected='current', logOffsets=new Map(), followLogs=true;
+async function loadControls(){try{const [config,inputs]=await Promise.all([fetch('/api/v1/config',{cache:'no-store'}).then(r=>r.json()),fetch('/api/v1/inputs',{cache:'no-store'}).then(r=>r.json())]);$('#implementation-model').value=config.models?.implementation||'';$('#verification-model').value=config.models?.verification||'';$('#implementation-limit').value=config.limits?.implementation_minutes??30;$('#verification-limit').value=config.limits?.verification_minutes??5;$('#idle-limit').value=config.limits?.idle_warning_minutes??5;const input=$('#input'), old=input.value;input.replaceChildren(new Option('Selecione um input',''),...(inputs.inputs||[]).map(value=>new Option(value,value)));input.value=old}catch(error){$('#notice').textContent=`Falha ao carregar configuração: ${error.message}`}}
+function currentConfig(){const n=id=>Math.max(0,Math.min(240,Number.parseInt($(id).value,10)||0));return{models:{implementation:$('#implementation-model').value.trim(),verification:$('#verification-model').value.trim()},limits:{implementation_minutes:n('#implementation-limit'),verification_minutes:n('#verification-limit'),idle_warning_minutes:n('#idle-limit')}}}
+async function postJson(url,value){const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});const data=await res.json();if(!res.ok)throw new Error(data.message||data.error||'Falha na operação');return data}
 function esc(value){return String(value??'—').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function status(value){return `<span class="${esc(value)}">${statusText[value]||esc(value)}</span>`}
 function count(state){let total=0,done=0;state.phases.forEach(p=>p.tasks.forEach(t=>{total++;if(t.status==='done')done++}));return{total,done}}
@@ -54,5 +57,7 @@ $('#stop-run')?.addEventListener('click',async()=>{
     btn.textContent='Encerrar Ralph';
   }
 });
+$('#save-config').addEventListener('click',async()=>{try{const data=await postJson('/api/v1/config',currentConfig());$('#notice').textContent=data.message}catch(error){$('#notice').textContent=error.message}});
+$('#start-run').addEventListener('click',async()=>{try{const input=$('#input').value;if(!input)throw new Error('Selecione um PHASES.md');await postJson('/api/v1/config',currentConfig());const data=await postJson('/api/v1/runs',{input,engine:$('#engine').value});$('#notice').textContent=data.message;setTimeout(refresh,500)}catch(error){$('#notice').textContent=error.message}});
 $('#logs').dataset.placeholder='true';
-refresh();setInterval(refresh,1000);
+loadControls();refresh();setInterval(refresh,1000);

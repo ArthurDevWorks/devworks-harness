@@ -11,6 +11,17 @@
     <header><p class="eyebrow">DEVWORKS</p><h1>RALPH <span>MONITOR</span></h1></header>
     <div id="notice" class="notice" role="status">Carregando estado do Ralph…</div>
     <section class="toolbar" aria-label="Execução exibida"><label for="runs">Execução</label><select id="runs"><option>Carregando…</option></select><button id="stop-run" type="button" class="btn-danger" style="display:none" title="Encerrar a execução ativa do Ralph">Encerrar Ralph</button><span id="updated" class="muted"></span></section>
+    <section class="panel controls" aria-label="Configuração e execução">
+      <h2>CONFIGURAÇÃO E EXECUÇÃO</h2>
+      <label>Engine <select id="engine"><option value="codex">Codex</option><option value="claude">Claude</option><option value="opencode">OpenCode</option><option value="antigravity">Antigravity</option></select></label>
+      <label>Modelo de implementação <input id="implementation-model" maxlength="160" placeholder="Padrão da CLI"></label>
+      <label>Modelo de verificação <input id="verification-model" maxlength="160" placeholder="Padrão da CLI"></label>
+      <label>Limite implementação (min) <input id="implementation-limit" type="number" min="0" max="240" value="30"></label>
+      <label>Limite verificação (min) <input id="verification-limit" type="number" min="0" max="240" value="5"></label>
+      <label>Aviso sem saída (min) <input id="idle-limit" type="number" min="0" max="240" value="5"></label>
+      <label>PHASES.md <select id="input"><option value="">Selecione um input</option></select></label>
+      <button id="save-config" type="button">Salvar configuração</button><button id="start-run" type="button">Iniciar / retomar</button>
+    </section>
     <div class="workspace">
       <div class="monitor-column">
         <section id="summary" class="summary" aria-live="polite"></section>

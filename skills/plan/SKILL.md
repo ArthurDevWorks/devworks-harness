@@ -56,11 +56,16 @@ dependam deles.
 
 - Consulte `config/coding-style-profile.md` (ou `docs/coding-style-profile.md`)
   como referência do estilo do desenvolvedor.
-- **Proibido over-engineering nos Critérios de Aceite**: especifique o
-  comportamento funcional esperado, e não microrregras defensivas artificiais
-  (como validações de tipos não escalares em modelos internos ou queries manuais
-  redundantes). A IA deve agregar tipagem estrita, prevenção a SQL Injection e
-  early returns, mas sem inventar complexidade acidental.
+- Identifique a stack, versão, ferramentas, regras locais e trechos semelhantes
+  antes de definir a solução. Use a documentação oficial pertinente como fonte
+  de decisão; se ela não estiver acessível, registre a limitação.
+- Critérios de aceite devem exigir código legível e consistente com o projeto,
+  sem impor sintaxe ou convenções de uma stack diferente. Planeje condições
+  simples, preparação de valores antes de chamadas, funções com responsabilidade
+  real e documentação breve para novas funções quando isso for aplicável.
+- Proibido over-engineering nos critérios de aceite: descreva comportamento
+  funcional e compatibilidade, sem transformar preferências de implementação em
+  validações artificiais ou consultas redundantes.
 - **Isolamento de validações manuais e decisões pendentes**:
   Se uma decisão técnica/negócio (`DEC-*`) estiver em `draft` ou se um teste exigir
   ambiente ao vivo/login autenticado que o runner headless não possui, registre-os

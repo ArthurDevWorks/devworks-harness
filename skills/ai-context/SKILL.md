@@ -29,6 +29,9 @@ de contexto. Nunca use `.spec/` como fonte de verdade para descrever o legado.
    migrations/modelos, rotas/controladores e clientes de integração que existam.
 3. Registre somente fatos sustentados por arquivos reais. Diferencie ausência
    de evidência de uma funcionalidade ausente.
+4. Diferencie preferências declaradas em perfis de estilo de padrões observados
+   no código. Uma preferência só é registrada como convenção adotada quando o
+   projeto ou suas ferramentas a sustentarem.
 
 ## Saídas
 

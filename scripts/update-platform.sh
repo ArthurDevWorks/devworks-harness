@@ -13,8 +13,7 @@ Uso: scripts/update-platform.sh [--platform codex|claude|opencode|antigravity] [
 
 Atualiza Skills e runtime de uma instalacao existente no projeto-alvo usando a
 versao disponivel neste checkout do DEVWORKS Harness. A plataforma e detectada
-por config/devworks-harness-engine quando possivel. Em instalacoes antigas sem
-essa configuracao, informe --platform.
+pelos Skills instalados; se houver mais de uma, informe --platform.
 
 O script nao atualiza este repositorio com git pull e nao altera artefatos de
 trabalho do projeto, como .spec/, PHASES.md e .phases/.
@@ -73,26 +72,9 @@ if [ ! -x "$INSTALLER" ]; then
   exit 1
 fi
 
-RECORDED_PLATFORM=""
 ENGINE_FILE="$TARGET_ROOT/config/devworks-harness-engine"
 if [ -f "$ENGINE_FILE" ]; then
-  IFS= read -r RECORDED_PLATFORM < "$ENGINE_FILE" || true
-  case "$RECORDED_PLATFORM" in
-    codex|claude|opencode|antigravity) ;;
-    *)
-      echo "Engine registrada invalida em $ENGINE_FILE: $RECORDED_PLATFORM" >&2
-      exit 1
-      ;;
-  esac
-fi
-
-if [ -n "$RECORDED_PLATFORM" ]; then
-  if [ -n "$PLATFORM" ] && [ "$PLATFORM" != "$RECORDED_PLATFORM" ]; then
-    echo "A instalacao usa '$RECORDED_PLATFORM', mas --platform informou '$PLATFORM'." >&2
-    echo "Uma atualizacao nao troca a engine do projeto." >&2
-    exit 1
-  fi
-  PLATFORM="$RECORDED_PLATFORM"
+  echo "Ignorando a engine legada em $ENGINE_FILE; a engine agora é escolhida por execução."
 fi
 
 has_skill_set() {

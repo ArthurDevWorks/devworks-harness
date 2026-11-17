@@ -1,217 +1,73 @@
-# Guia Canônico de Estilo e Engenharia (DNA de Código)
-<!-- DEVWORKS Harness Coding Profile - Baseado nos commits e estilo de desenvolvimento de Arthur Parente -->
+# Guia Universal de Estilo e Engenharia
 
-Este documento estabelece as diretrizes e padrões de desenvolvimento observados no repositório e nos projetos mantidos. Toda IA, agente ou executor deve seguir rigorosamente estas convenções para produzir código consistente, limpo, cirúrgico e sem retrabalho.
+Este perfil define preferências de engenharia para projetos que usam o
+DEVWORKS Harness. Ele é agnóstico de linguagem, framework e ferramenta.
 
----
+Antes de alterar código, o agente deve identificar a stack, suas versões, os
+formatadores e linters configurados, as regras locais e trechos semelhantes já
+implementados. A documentação oficial aplicável à versão detectada deve orientar
+as decisões técnicas. Quando ela não estiver acessível, o agente deve registrar
+essa limitação e usar somente evidências verificadas no projeto.
 
-## 1. Princípio Fundamental: Simplicidade Cirúrgica vs Over-Engineering
+As regras deste perfil expressam a intenção desejada. Elas não provam que o
+projeto já as adota e não substituem convenções, contratos ou formatadores que
+o próprio projeto imponha.
 
-O objetivo da engenharia assistida por IA é **resolver o problema real na causa-raiz com a menor intervenção necessária**, agregando robustez técnica sem criar complexidade acidental.
+## 1. Escopo e simplicidade
 
-### O que a IA NUNCA deve fazer:
-1. **Proibido Over-Engineering Defensivo em Dados Internos**: Nunca adicione checagens artificiais de tipo (`is_scalar`, `!is_bool`, `filter_var`) em dados internos de models/banco quando a própria plataforma já os valida ou sanitiza.
-2. **Proibido Consultas SQL Redundantes**: Nunca faça um `SELECT` manual no banco para checar a existência de um registro antes de chamar um método nativo que já faz exatamente essa consulta (exemplo: rodar SQL em `#__users` antes de chamar `Factory::getUser()`).
-3. **Proibido Criar Abstrações Desnecessárias**: Nunca introduza classes de serviço, interfaces, repositórios ou helpers adicionais para uma alteração local de poucas linhas. Respeite o ponto de extensão (`seam`) já adotado no arquivo.
-4. **Proibido Reformatar Arquivos Inteiros**: Nunca altere a indentação, quebras de linha ou espaçamento de linhas que não fazem parte do escopo da tarefa.
+- Resolva a causa no menor ponto de mudança necessário. Preserve contratos,
+  dados e fluxos não relacionados.
+- Não introduza camadas, dependências, validações ou consultas redundantes sem
+  uma necessidade confirmada pelo código, pela stack ou pelo requisito.
+- Não reformate arquivos inteiros nem altere código fora do escopo.
+- Prefira APIs, mecanismos de segurança e validações já fornecidos pela stack e
+  já usados no projeto.
 
-### O que a IA DEVE agregar:
-1. **Tipagem Estrita e Segura (PHP 8.2+)**: Use types explícitos em argumentos e retornos de funções (`array $userIds, int $id): ?object`, `: array`, `: void`.
-2. **Prevenção a Injeção de SQL**: Use sempre o Query Builder com `quoteName()` para tabelas e colunas, `quote()` ou casting inteiro `(int)` para valores, e `whereIn()`.
-3. **Null-Safety e Defesa Elegante**: Use o operador de coalescência nula (`??`) e safe call (`?->`) em vez de múltiplos blocos `if (isset(...))`.
-4. **Early Returns Claros**: Interrompa a execução cedo para casos inválidos (`guard clauses`), separando a guarda da lógica subsequente por uma linha em branco.
+## 2. Legibilidade do fluxo
 
----
+- Mantenha condições curtas e fáceis de ler. Quando uma condição reunir regras
+  independentes, extraia valores ou verificações nomeadas e divida os `if`s sem
+  mudar a lógica, a ordem ou os efeitos colaterais.
+- Indente de acordo com o arquivo e com o formatador configurado. Nunca misture
+  estilos de indentação na mesma alteração.
+- Separe etapas distintas do processamento por linhas em branco: obtenção de
+  dados, transformação, decisão, efeito externo e retorno. Após uma consulta,
+  leitura ou chamada relevante, deixe uma linha em branco antes da próxima
+  etapa quando isso tornar o fluxo mais claro.
+- Use retornos antecipados ou a estrutura equivalente da linguagem quando eles
+  reduzirem aninhamento e preservarem a clareza.
+- Evite `break`, `continue` e equivalentes de salto de fluxo. Use-os somente
+  quando a alternativa deixar o código menos claro ou mais propenso a erro.
 
-## 2. Convenções de Código PHP
+## 3. Funções e chamadas
 
-### 2.1. Abertura de Chaves Allman (`\n{`)
-Em métodos, funções e blocos de controle (`if`, `foreach`, `switch`, `while`), a chave de abertura `{` fica **em uma nova linha**, alinhada com a instrução:
+- Toda função, método, handler ou unidade equivalente criada deve ter uma breve
+  descrição no formato de documentação adotado pelo projeto e pela linguagem.
+- Não crie uma função intermediária que apenas chame outra. Faça o chamador usar
+  diretamente a função final quando não houver transformação, política,
+  tratamento de erro, limite de responsabilidade ou contrato público a manter.
+- Prepare valores, objetos e coleções antes da chamada. Evite passar expressões
+  extensas, múltiplas transformações ou estruturas montadas inline como
+  argumentos, salvo quando o padrão local tornar a chamada mais clara.
 
-```php
-// CORRETO (Padrão adotado)
-if (!isset($data->user_id))
-{
-    return;
-}
+## 4. Alinhamento e formatação
 
-$userId = (int) $data->user_id;
-$user   = Factory::getUser($userId);
+- Quando a linguagem, o formatador e o estilo local permitirem, alinhe
+  atribuições e associações de mapas/arrays em blocos relacionados para facilitar
+  a leitura.
+- Não force alinhamento que conflite com um formatador obrigatório, uma regra de
+  lint ou o estilo predominante do arquivo.
 
-if (!$user || (int) $user->id !== $userId)
-{
-    return;
-}
-```
+## 5. Descoberta de padrões por projeto
 
-```php
-// ERRADO (Estilo K&R rejeitado)
-if (!isset($data->user_id)) {
-    return;
-}
-```
+Para cada mudança, verifique nesta ordem:
 
-### 2.2. Indentação Fiel ao Arquivo
-- **Componentes Joomla (`administrator/`, `components/com_*`, `plugins/`)**: A maioria dos arquivos utiliza **Tabs**. Mantenha tabs onde houver tabs.
-- **Projetos Modernos / Laravel / Bibliotecas PSR-12**: Utilize **4 espaços**.
-- Nunca misture espaços e tabs na mesma alteração.
+1. regras locais, documentação, manifestos, versões e ferramentas configuradas;
+2. documentação oficial da stack e da versão relevantes à mudança;
+3. pelo menos um trecho semelhante no código, quando houver;
+4. contratos públicos, testes e convenções de nomenclatura existentes.
 
-### 2.3. Guard Clauses e Sanitização em Linha
-Prefira sanitizações concisas e pipes nativos do PHP:
-
-```php
-// CORRETO
-$userIds = array_values(array_filter(array_unique(array_map('intval', $userIds))));
-if (!$userIds)
-{
-    return [];
-}
-
-$enderecos = isset($data['endereco']) && is_array($data['endereco']) ? $data['endereco'] : [];
-if ($enderecos !== [])
-{
-    $this->saveCrmEndereco($enderecos, $idCrm);
-}
-```
-
----
-
-## 3. Padrões Joomla 4 e 5 (`com_smart*` e Plugins)
-
-### 3.1. Injeção de Dependências e Acesso ao Banco de Dados
-- Utilize o container moderno do Joomla 5 quando disponível:
-  ```php
-  use Joomla\Database\DatabaseInterface;
-  // ou use Joomla\Database\DatabaseDriver;
-  $db = Factory::getContainer()->get(DatabaseInterface::class);
-  ```
-- Monte consultas pelo Query Builder:
-  ```php
-  $query = $db->getQuery(true)
-      ->select($db->quoteName(['id', 'lastvisitDate']))
-      ->from($db->quoteName('#__users'))
-      ->whereIn($db->quoteName('id'), $userIds);
-
-  $result = $db->setQuery($query)->loadAssocList('id', 'lastvisitDate') ?: [];
-  ```
-
-### 3.2. Manipulação de Formulários Joomla
-- Ao instanciar e carregar um formulário em sub-operações ou controllers, passe `loadData: false` para não sobrescrever o contexto:
-  ```php
-  $crmEmailModel = new EmailModel();
-  $formCrm       = $crmEmailModel->getForm([], false);
-  ```
-
-### 3.3. Textos e Internacionalização
-- Sempre utilize `Text::_('CHAVE_SEMANTEICA')` em vez de strings hardcoded em português.
-- Adicione a chave correspondente no arquivo `administrator/language/pt-BR/com_*.ini`.
-
-### 3.4. Assets Frontend e Invalidação de Cache (`CRÍTICO`)
-- Ao alterar qualquer arquivo JavaScript ou CSS em `media/com_*/js/` ou `media/com_*/css/`, **é obrigatório incrementar a versão do asset no arquivo `media/com_*/joomla.asset.json`**:
-  ```json
-  {
-    "name": "com_smarteventos.inscricaoBe",
-    "type": "script",
-    "uri": "com_smarteventos/inscricaoBe.js",
-    "version": "1.0.2",
-    "dependencies": ["jquery"]
-  }
-  ```
-  *Sem essa atualização, os navegadores e clientes continuam servindo o arquivo antigo em cache.*
-
----
-
-## 4. Convenções Frontend (JavaScript & CSS)
-
-1. **Defensividade Sem Quebra**: Sempre verifique se métodos e objetos opcionais existem antes de invocá-los:
-   ```javascript
-   if (typeof Joomla.updateCupomVisibility === 'function') {
-       Joomla.updateCupomVisibility(Joomla.eventoData);
-   }
-   ```
-2. **Rotas e Parâmetros Nativos**:
-   ```javascript
-   const url = Joomla.getOptions('system.paths').baseFull + 'index.php?option=com_smarteventos&task=inscricoe.getEventoData&format=json';
-   ```
-3. **Limpeza de Depuração**: Nunca comite `console.log()` ou `debugger` em código final.
-
----
-
-## 5. Padrão Canônico de Mensagens de Commit
-
-As mensagens de commit seguem o formato semântico Tridia com contexto de módulo e resumo objetivo:
-
-| Tipo | Prefixo / Emoji | Exemplo |
-|---|---|---|
-| Correção | `🐛 fix: == <modulo>` | `🐛 fix: == com_smartassociados + correcao para nao atualizar usuario do gestor quando o associado nao tem user.` |
-| Ajuste / Melhoria | `👌 style: == <modulo>` | `👌 style: == com_smarteventos + unificando consulta de associado do BE e FE` |
-| Nova Funcionalidade | `✨ feat: == <modulo>` | `✨ feat: == com_smartassociados + adicionada geracao de excel com escolha de colunas.` |
-| Manutenção / Scripts | `🔧 chore: == <modulo>` | `🔧 chore: == com_smarteventos + atualizacao de versao no asset.json` |
-| Refatoração | `♻️ refactor: == <modulo>` | `♻️ refactor: == com_submissoes + otimizacao das buscas pelas submissoes e arquivos.` |
-
----
-
-## 6. Comparativo Prático: Como Desenvolver vs Over-Engineering
-
-### Caso Real: Validação de Vínculo de Usuário em Salvamento
-
-#### ❌ Como a IA costuma errar (Over-Engineering Rejeitado):
-```php
-if (!$isNew && $dataCrm
-    && isset($dataCrm->user_id)
-    && is_scalar($dataCrm->user_id)
-    && !is_bool($dataCrm->user_id)
-    && filter_var($dataCrm->user_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) !== false) {
-    $this->updateUser($dataCrm);
-}
-
-private function updateUser(object $data) {
-    if (!isset($data->user_id) || !is_scalar($data->user_id) || is_bool($data->user_id)) {
-        return;
-    }
-    $userId = filter_var($data->user_id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-    if ($userId === false) {
-        return;
-    }
-    $query = $this->db->getQuery(true)
-        ->select($this->db->quoteName('id'))
-        ->from($this->db->quoteName('#__users'))
-        ->where($this->db->quoteName('id') . ' = ' . $userId);
-    if (!$this->db->setQuery($query)->loadResult()) {
-        return;
-    }
-    $user = Factory::getUser($userId);
-    if (!$user || (int) $user->id !== $userId) {
-        return;
-    }
-    ...
-}
-```
-
-#### ✅ Como você desenvolve e como a IA deve codar (Aprovado):
-```php
-if (!$isNew && $dataCrm && isset($dataCrm->user_id))
-{
-    $this->updateUser($dataCrm);
-}
-
-private function updateUser(object $data): void
-{
-    if (!isset($data->user_id))
-    {
-        return;
-    }
-
-    $userId = (int) $data->user_id;
-
-    $user = Factory::getUser($userId);
-
-    if (!$user || (int) $user->id !== $userId)
-    {
-        return;
-    }
-
-    $username = preg_replace('/\D/', '', (string) ($data->cpf ?? ''));
-    ...
-}
-```
+Exemplos como Joomla, Laravel, Component Creator ou outro gerador não são
+regras globais. Quando estiverem presentes, seus nomes de diretórios, arquivos,
+classes, convenções de assets e pontos de extensão devem ser descobertos e
+seguidos no projeto correspondente.

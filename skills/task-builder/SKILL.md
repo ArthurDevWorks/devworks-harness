@@ -70,9 +70,11 @@ possam ser verificados.
   tarefa. Todo critério do SPEC deve aparecer em uma tarefa ou ser registrado
   como fora da fase.
 - **DNA de Código e Critérios Limpos**: Consulte `config/coding-style-profile.md`.
-  Não crie critérios de aceite que imponham over-engineering (validações redundantes
-  de tipos internos ou queries repetidas). Em projetos Joomla, se a task altera JS/CSS
-  em `media/com_*/`, inclua explicitamente a atualização de versão no `joomla.asset.json`.
+  Identifique stack, versão, ferramentas, documentação oficial e um padrão local
+  antes de detalhar uma task. Não imponha convenções de outra stack; quando um
+  framework ou gerador estiver presente, registre somente requisitos confirmados
+  pelos arquivos e convenções desse projeto. Não crie critérios que imponham
+  over-engineering, validações artificiais ou consultas redundantes.
 - Para regras, cálculos, permissões, validações, estados e APIs, especifique
   teste automatizado. Para trabalho visual puro, descreva uma validação manual
   objetiva e a referência de design, se houver.

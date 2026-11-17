@@ -7,12 +7,14 @@ adapter_usage_pattern() { printf '%s' 'rate limit reached|quota exceeded|usage l
 
 adapter_run_engine_once() {
   local prompt_file="$1" log_file="$2" mode="$3" rc=0 quiet=0
+  local -a limiter=()
+  if [ "${RALPH_SESSION_TIMEOUT_SECONDS:-0}" -gt 0 ] && command -v timeout >/dev/null 2>&1; then limiter=(timeout "$RALPH_SESSION_TIMEOUT_SECONDS"); fi
   if [[ "$mode" == "verify" ]]; then
     OPENCODE_CONFIG_CONTENT='{"permission":{"*":"deny","read":"allow","glob":"allow","grep":"allow"}}' \
-      opencode run --format default "${ENGINE_MODEL_ARGS[@]}" < "$prompt_file" 2>&1 | tee "$log_file" || rc=$?
+      "${limiter[@]}" opencode run --format default "${ENGINE_MODEL_ARGS[@]}" < "$prompt_file" 2>&1 | tee "$log_file" || rc=$?
   else
     $DASHBOARD && quiet=1
-    if opencode run --auto --format json < "$prompt_file" 2>&1 | tee "$log_file" \
+    if "${limiter[@]}" opencode run --auto --format json "${ENGINE_MODEL_ARGS[@]}" < "$prompt_file" 2>&1 | tee "$log_file" \
          | stream_watch "$LIVE_STATE" "${RALPH_PHASE_NUM:-0}" "$quiet" "$CURRENT_PHASE_FILE"; then rc=0; else rc=$?; fi
   fi
   return "$rc"
