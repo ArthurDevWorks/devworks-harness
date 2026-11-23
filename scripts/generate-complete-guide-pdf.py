@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -26,6 +27,7 @@ from reportlab.platypus import (
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output" / "pdf" / "guia-completo-devworks-harness.pdf"
+DOCS_OUTPUT = ROOT / "docs" / "guia-completo-devworks-harness.pdf"
 
 PAGE_W, PAGE_H = A4
 NAVY = colors.HexColor("#07131F")
@@ -212,11 +214,12 @@ def build_complete_story() -> list:
         grid(
             ["Componente", "Situação"],
             [
-                ["Ralph e quatro engines", "Implementado e testado"],
-                ["Gates, histórico, lock, TUI e dashboard web", "Implementado"],
-                ["Política Antigravity com fallback de modelo", "Implementada no Ralph"],
-                ["Skills portáveis e Task Builder", "Implementados: init, plan, task-builder e ai-context"],
-                ["Plugin Claude", "Comandos legados preservados como adaptador"],
+                ["Ralph e quatro engines", "Implementado (Codex, Claude, OpenCode e Antigravity)"],
+                ["Fila multi-engine e failover", "Implementada prioridade cross-engine sem queimar ciclos"],
+                ["Ralph Web & launcher", "Padrão no ralph.sh com seleção de fases e parada ativa"],
+                ["Gates mecânicos e histórico", "Implementados G0 (conclusão), G1 (mutação), G2 (testes), G3 (auditoria)"],
+                ["Skills canônicos e Task Builder", "Implementados: init, plan, task-builder e ai-context"],
+                ["CLI harness e atualização", "Implementados: scripts/harness.sh e update-platform.sh"],
             ],
             [65, 109],
         ),
@@ -252,9 +255,9 @@ def build_complete_story() -> list:
     story += [
         para("Mantenha uma cópia central do DEVWORKS Harness fora dos projetos atendidos. Os scripts são chamados a partir da raiz do projeto-alvo."),
         code("git clone <url-interno-ou-github>/devworks-harness.git\ncd devworks-harness\ngit switch main\nchmod +x scripts/*.sh scripts/engines/*.sh"),
-        para("Instalar os Skills numa plataforma", "Sub"),
-        para("O Harness instala os quatro Skills canônicos (init, plan, task-builder e ai-context) para uma engine por execução. Defina os caminhos uma vez e execute a linha da engine desejada; repita para instalar em mais de uma. Use os nomes aceitos em --platform, não o nome do executável."),
-        code("INSTALLER=/caminho/devworks-harness/scripts/install-platform.sh\nPROJECT=/caminho/do/projeto-alvo\n\"$INSTALLER\" --platform codex --scope project --root \"$PROJECT\"\n\"$INSTALLER\" --platform claude --scope project --root \"$PROJECT\"\n\"$INSTALLER\" --platform opencode --scope project --root \"$PROJECT\"\n\"$INSTALLER\" --platform antigravity --scope project --root \"$PROJECT\""),
+        para("Instalar os Skills e Runtime no projeto", "Sub"),
+        para("O Harness instala os quatro Skills canônicos (init, plan, task-builder e ai-context), scripts, adaptadores e dashboard. Aceita --platform all para todas as CLIs ou lista separada por vírgula (ex: --platform codex,antigravity). Registra as engines em config/harness.json."),
+        code("INSTALLER=/caminho/devworks-harness/scripts/install-platform.sh\nPROJECT=/caminho/do/projeto-alvo\n\"$INSTALLER\" --platform all --scope project --root \"$PROJECT\"\n# Atualização posterior sem tocar em arquivos de trabalho:\n/caminho/devworks-harness/scripts/update-platform.sh --root \"$PROJECT\""),
         grid(
             ["--platform", "Executável", "Destino no projeto"],
             [
@@ -266,7 +269,7 @@ def build_complete_story() -> list:
             [43, 43, 88],
             font="Tiny",
         ),
-        para("Use --scope user para instalar no perfil do usuário em vez do projeto. A CLI correspondente precisa estar instalada; o instalador valida sua versão antes de copiar. Para Antigravity, informe --platform antigravity (o executável chamado é agy). --check valida CLI e destino sem copiar arquivos."),
+        para("Use --scope user para instalar no perfil do usuário em vez do projeto. A CLI correspondente precisa estar instalada. Para Antigravity, informe --platform antigravity (o executável é agy). --check valida CLI e destino sem copiar arquivos."),
         para("Valide o harness antes de compartilhar", "Sub"),
         code("./scripts/check-shell.sh\n./scripts/test-ralph.sh\ngit diff --check"),
         para("Uso a partir de outro projeto", "Sub"),
@@ -455,13 +458,13 @@ def build_complete_story() -> list:
         PageBreak(),
     ]
 
-    story += section("11", "Execução com Ralph", "UMA SESSÃO NOVA POR FASE E CORREÇÃO")
+    story += section("11", "Execução com Ralph e Web", "SESSÃO NOVA POR FASE E CORREÇÃO")
     story += [
-        para("O Ralph lê o PHASES.md, separa as fases e abre uma sessão nova para cada uma. Uma falha abre outra sessão com a causa real. A sessão anterior não é reutilizada."),
-        code("./scripts/ralph.sh [opções] [arquivo]\n\n--engine codex|claude|opencode|antigravity\n--profile routine|standard|complex\n--from N\n--keep-going\n--max-cycles N\n--test-cmd '<comando>'\n--no-verify\n--dashboard"),
-        para("Exemplos", "Sub"),
-        code("# Projeto Laravel\n./scripts/ralph.sh --engine antigravity --profile standard \\\n+  --test-cmd 'vendor/bin/sail test' .spec/features/cadastro/PHASES.md\n\n# Retomar da fase 3\n./scripts/ralph.sh --engine codex --from 3 PHASES.md\n\n# Refatoração complexa\n./scripts/ralph.sh --engine antigravity --profile complex \\\n+  --max-cycles 2 PHASES.md"),
-        callout("PADRÃO", "Use standard para a maioria das fases. Use routine para trabalho repetitivo e bem delimitado. Use complex para arquitetura difícil, refatoração ampla ou diagnóstico com muitas dependências.", BLUE),
+        para("O Ralph executa arquivos PHASES.md ou diretórios inteiros (.spec/features/<slug>). Sem flags, scripts/ralph.sh abre o painel Ralph Web por padrão:"),
+        code("./scripts/ralph.sh [opções] [arquivo-ou-diretório]\n\n--model-queue <rotas>    fila cross-engine (ex: antigravity,codex)\n--verify-queue <rotas>   fila opcional do verificador (Gate 3)\n--phases <lista>         fases específicas (ex: --phases 1,3)\n--headless               modo terminal direto sem abrir navegador\n--engine <nome>          engine de implementação (ativa headless)\n--profile <perfil>       routine | standard | complex (Antigravity)\n--from N / --keep-going  retomada e tolerância a falhas"),
+        para("Menu CLI auxiliar scripts/harness.sh", "Sub"),
+        code("scripts/harness.sh configure  # salva prioridades e modelos em config/harness.json\nscripts/harness.sh run .spec/features/minha-feature\nscripts/harness.sh resume .spec/features/minha-feature"),
+        callout("PADRÃO", "scripts/ralph.sh sem flags abre a interface interativa no navegador. Use --model-queue na CLI ou priority_queue em config/harness.json para failover automático entre provedores.", BLUE),
         PageBreak(),
     ]
 
@@ -483,8 +486,8 @@ def build_complete_story() -> list:
             ["Evento", "Resposta"],
             [
                 ["Gate vermelho", "Nova sessão de correção; consome um ciclo"],
-                ["Limite do modelo Antigravity", "Próximo modelo da rota; mesma fase; não consome ciclo"],
-                ["Todas as rotas limitadas", "Aguarda reset e repete a mesma fase"],
+                ["Limite de IA/cota (429)", "Avança para o próximo da fila multi-engine sem consumir ciclo"],
+                ["Todas as engines esgotadas", "Aguarda reset oficial e repete a mesma fase"],
                 ["Fase falha após máximo de ciclos", "Para por padrão; --keep-going continua"],
                 ["Mudança parcial", "Permanece na árvore para diagnóstico e revisão"],
             ],
@@ -494,10 +497,10 @@ def build_complete_story() -> list:
         PageBreak(),
     ]
 
-    story += section("13", "Dashboard e observabilidade", "ACOMPANHAR SEM CONTROLAR")
+    story += section("13", "Ralph Web e observabilidade", "ACOMPANHAR E CONTROLAR")
     story += [
-        code("# Painel de terminal em outro terminal\n./scripts/ralph-watch.sh /caminho/do/projeto\n\n# Dashboard web local\n./scripts/ralph-web.sh /caminho/do/projeto\n# abrir http://127.0.0.1:7331"),
-        para("O dashboard é somente leitura e escuta apenas no computador local. Ele mostra run, engine, modelo, perfil, fase, task, ciclo, gates, atividade, duração, logs e histórico quando esses dados estão disponíveis no estado."),
+        code("# Inicia o Ralph Web (padrão ao rodar ralph.sh sem flags)\n./scripts/ralph.sh\n# ou explicitamente:\n./scripts/ralph-web.sh /caminho/do/projeto  # http://127.0.0.1:7331\n\n# Painel TUI no terminal:\n./scripts/ralph-watch.sh /caminho/do/projeto"),
+        para("O Ralph Web é a interface local do harness. Permite montar filas de prioridade de modelos, selecionar fases específicas (--phases), iniciar o run, acompanhar logs em tempo real e interromper o processo ativo pelo botão 'Encerrar Ralph'."),
         para("Arquivos de diagnóstico", "Sub"),
         grid(
             ["Caminho", "Conteúdo"],
@@ -505,13 +508,13 @@ def build_complete_story() -> list:
                 [".phases/current", "Ponteiro para o run atual"],
                 [".phases/runs/<run>/logs/", "Saída de implementação e verificação"],
                 [".phases/runs/<run>/prompts/", "Prompt autocontido de cada sessão"],
-                [".phases/runs/<run>/state/", "Estado consolidado e progresso ao vivo"],
+                [".phases/runs/<run>/state/", "Estado consolidado (run.tsv) e ao vivo (live.tsv)"],
                 [".phases/progress/", "Fases concluídas por hash do input"],
                 [".phases/.ralph.lock/", "Trava contra dois Ralphs no mesmo repositório"],
             ],
             [72, 102],
         ),
-        callout("LIMITAÇÃO INTENCIONAL", "O dashboard não pausa, cancela, retoma nem altera a execução. Controle operacional permanece no terminal e no processo do Ralph.", GREEN),
+        callout("CONTROLE SEGURO", "O botão 'Encerrar Ralph' encerra a execução ativa de forma limpa, preservando o estado consolidado e as alterações parciais na árvore Git.", GREEN),
         PageBreak(),
     ]
 
@@ -631,8 +634,8 @@ def build_complete_story() -> list:
         checklist([
             "As Skills são portáveis por contrato; a interface de chamada ainda varia por engine.",
             "Plan e Task Builder usam a política de modelos como recomendação; a seleção de rota nessas interfaces ainda é manual.",
-            "O failover de modelos está implementado para a engine Antigravity; Codex, Claude Code e OpenCode mantêm seu próprio modelo configurado.",
-            "O dashboard é local e somente leitura.",
+            "Fila de prioridade multi-engine suporta Codex, Claude Code, OpenCode e Antigravity com failover automático.",
+            "O Ralph Web oferece configuração de filas, seleção de fases e parada ativa pelo botão Encerrar Ralph.",
         ]),
         Spacer(1, 8 * mm),
         para("DEVWORKS Harness - guia de uso interno - edição MVP operacional", "Center"),
@@ -643,18 +646,18 @@ def build_complete_story() -> list:
 def build_story() -> list:
     """Build the short, task-oriented guide used by the current PDF."""
     story: list = [
-        Spacer(1, 5 * mm),
+        Spacer(1, 4 * mm),
         para("DEVWORKS HARNESS", "Kicker"),
         para("GUIA PRATICO DE USO", "TitleDark"),
-        para("Instale Skills e scripts, documente o projeto, planeje a entrega, detalhe as fases e acompanhe a execução.", "Body"),
-        callout("FLUXO", "Instalar -> documentar -> planejar -> task-builder -> executar -> acompanhar no dashboard", GREEN),
-        Spacer(1, 4 * mm),
+        para("Instale Skills e scripts, documente o projeto, planeje a entrega, detalhe as fases e execute com Ralph Web ou CLI.", "Body"),
+        callout("FLUXO", "Instalar -> documentar -> planejar -> task-builder -> executar (Ralph Web / CLI) -> revisar diff", GREEN),
+        Spacer(1, 3 * mm),
     ]
 
-    story += section("1", "Instale os Skills", "ESCOLHA UMA ENGINE")
+    story += section("1", "Instale os Skills e Runtime", "MULTI-ENGINE")
     story += [
-        para("Entre no projeto-alvo e rode o instalador central uma vez. Ele copia os Skills, Ralph e dashboard para o projeto e registra a engine escolhida como padrão."),
-        code("cd /caminho/do/projeto\nPLATFORM=codex  # codex | claude | opencode | antigravity\n/caminho/devworks-harness/scripts/install-platform.sh \\\n  --platform \"$PLATFORM\" \\\n  --scope project \\\n  --root ."),
+        para("Entre no projeto-alvo e rode o instalador central. Ele copia os Skills canônicos, Ralph e dashboard para o projeto e registra as engines em config/harness.json:"),
+        code("cd /caminho/do/projeto\n# Instala todas as CLIs (ou ex: --platform codex,antigravity)\n/caminho/devworks-harness/scripts/install-platform.sh \\\n  --platform all \\\n  --scope project \\\n  --root ."),
         grid(
             ["PLATFORM", "CLI", "Skills no projeto"],
             [
@@ -666,7 +669,7 @@ def build_story() -> list:
             [40, 40, 94],
             font="Tiny",
         ),
-        para("Para instalar em outra engine, troque PLATFORM e rode novamente. No Antigravity, use antigravity; agy é o executável. Depois use scripts/ralph.sh e scripts/ralph-web.sh do próprio projeto."),
+        para("Para atualizar o harness sem alterar arquivos de trabalho: scripts/update-platform.sh."),
         para("2. Documente o código existente", "Sub"),
         para("Abra o projeto na engine escolhida e envie este pedido:"),
         code("Use o Skill ai-context. Analise o código que já existe e gere a documentação de contexto do projeto. Não implemente mudanças."),
@@ -682,24 +685,23 @@ def build_story() -> list:
         para("Depois de aprovar o PLAN.md, peça arquivos executáveis para as fases aprovadas:"),
         code("Use o Skill task-builder para detalhar as fases aprovadas em .spec/features/minha-feature/PLAN.md. Gere um PHASES.md por fase, sem implementar."),
         para("Revise os arquivos em .spec/features/minha-feature/phases/ antes de executar."),
-        para("5. Execute com Ralph", "Sub"),
-        callout("ATENCAO", "O Ralph executa as fases sem interação e pode alterar arquivos. Confira o projeto e a branch antes de iniciar; ele não cria commits.", YELLOW),
-        code("cd /caminho/do/projeto\nscripts/ralph.sh .spec/features/minha-feature"),
-        para("O Ralph usa a engine registrada na instalação e executa phases/*/PHASES.md em ordem. Para trocar apenas neste run, use --engine. Se não detectar os testes, informe --test-cmd 'comando-de-testes'."),
-        para("6. Acompanhe no dashboard", "Sub"),
-        para("Depois de iniciar o Ralph, abra outro terminal e execute:"),
-        code("scripts/ralph-web.sh ."),
-        para("Abra http://127.0.0.1:7331 no navegador. Deixe esse terminal aberto enquanto acompanha a execução. O dashboard mostra o run e os logs; não controla nem interrompe o Ralph."),
+        para("5. Execute com Ralph Web ou CLI", "Sub"),
+        callout("ATENCAO", "O Ralph executa fases sem interação e pode alterar arquivos. Confira branch e repo antes de iniciar; ele não cria commits.", YELLOW),
+        code("# Sem flags: abre o painel interativo Ralph Web por padrão\nscripts/ralph.sh\n\n# Terminal: fila multi-engine e fases específicas\nscripts/ralph.sh --model-queue antigravity,codex --phases 1,3 .spec/features/minha-feature\n\n# Menu e assistente CLI\nscripts/harness.sh configure | run | resume"),
+        para("Fila de prioridade: em caso de limite/cota (429), o Ralph avança automaticamente para o próximo modelo/engine sem queimar ciclo de correção."),
+        para("6. Acompanhe e controle no Ralph Web", "Sub"),
+        para("Acesse http://127.0.0.1:7331 (iniciado por scripts/ralph.sh ou scripts/ralph-web.sh .): permite configurar filas de modelos, filtrar fases, acompanhar logs ao vivo e parar o run pelo botão 'Encerrar Ralph'."),
         para("Quando terminar", "Sub"),
-        para("Confira o resultado com git diff, execute a validação manual da entrega e faça o commit depois da revisão."),
-        Spacer(1, 4 * mm),
-        callout("RESUMO", "Instalador: scripts/install-platform.sh  |  Execução: scripts/ralph.sh  |  Dashboard: scripts/ralph-web.sh", GREEN),
+        para("Confira o resultado com git diff, execute a validação manual e faça o commit após a revisão."),
+        Spacer(1, 3 * mm),
+        callout("RESUMO", "Instalador: install-platform.sh  |  Ralph Web: ralph.sh  |  Menu CLI: harness.sh  |  Update: update-platform.sh", GREEN),
     ]
     return story
 
 
 def main() -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    DOCS_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     frame = Frame(18 * mm, 17 * mm, 174 * mm, 258 * mm, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
     document = BaseDocTemplate(
         str(OUTPUT),
@@ -714,7 +716,9 @@ def main() -> None:
     )
     document.addPageTemplates([PageTemplate(id="devworks", frames=[frame], onPage=page_background)])
     document.build(build_story())
-    print(OUTPUT)
+    shutil.copyfile(OUTPUT, DOCS_OUTPUT)
+    print(f"Generated: {OUTPUT}")
+    print(f"Copied to: {DOCS_OUTPUT}")
 
 
 if __name__ == "__main__":

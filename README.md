@@ -53,4 +53,4 @@ scripts/check-shell.sh
 python3 -m unittest tests/test_dashboard.py
 ```
 
-See [the workflow contract](docs/agents/canonical-workflows.md) and [the four-engine Ralph guide](docs/guia-ralph-quatro-engines.md) for operational details.
+See [the workflow contract](docs/agents/canonical-workflows.md), [the complete harness guide](docs/guia-completo-devworks-harness.md), and [the four-engine Ralph guide](docs/guia-ralph-quatro-engines.md) for operational details.

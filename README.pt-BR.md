@@ -53,4 +53,4 @@ scripts/check-shell.sh
 python3 -m unittest tests/test_dashboard.py
 ```
 
-Consulte o [contrato de workflows](docs/agents/canonical-workflows.md) e o [guia Ralph com quatro engines](docs/guia-ralph-quatro-engines.md) quando precisar dos detalhes operacionais.
+Consulte o [contrato de workflows](docs/agents/canonical-workflows.md), o [guia completo do harness](docs/guia-completo-devworks-harness.md) e o [guia Ralph com quatro engines](docs/guia-ralph-quatro-engines.md) quando precisar dos detalhes operacionais.

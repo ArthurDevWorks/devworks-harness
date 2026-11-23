@@ -2,6 +2,10 @@
 .idea/
 .vscode/
 
+# Python
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db
@@ -11,6 +15,8 @@ Thumbs.db
 
 docs/*
 !docs/guia-ralph-quatro-engines.md
+!docs/guia-completo-devworks-harness.md
+!docs/guia-completo-devworks-harness.pdf
 !docs/agents/
 !docs/agents/**
 # Mira
