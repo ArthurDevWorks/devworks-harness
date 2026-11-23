@@ -1,7 +1,10 @@
 {
+  "engines": [],
   "models": {
     "implementation": "",
-    "verification": ""
+    "verification": "",
+    "priority_queue": [],
+    "verify_queue": []
   },
   "limits": {
     "implementation_minutes": 30,

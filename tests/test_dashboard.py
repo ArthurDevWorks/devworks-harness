@@ -40,7 +40,7 @@ class DashboardServerTest(unittest.TestCase):
                     pass
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
-    def start_server(self):
+    def start_server(self, extra_env: dict[str, str] | None = None):
         harness_root = Path(__file__).resolve().parent.parent
         server_py = harness_root / "scripts" / "dashboard" / "server.py"
 
@@ -51,10 +51,15 @@ class DashboardServerTest(unittest.TestCase):
         self.port = s.getsockname()[1]
         s.close()
 
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
+
         self.server_proc = subprocess.Popen(
             ["python3", str(server_py), "--repo", str(self.repo), "--port", str(self.port)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=env,
         )
         time.sleep(0.5)
 
@@ -237,15 +242,175 @@ class DashboardServerTest(unittest.TestCase):
         index_html = (web_dir / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="stop-run"', index_html)
         self.assertIn("Encerrar Ralph", index_html)
+        self.assertIn('id="priority-queue"', index_html)
+        self.assertIn('id="phases-checklist"', index_html)
+        self.assertIn('id="model-picker"', index_html)
+        self.assertIn('id="verify-model-select"', index_html)
 
         app_js = (web_dir / "app.js").read_text(encoding="utf-8")
         self.assertIn("stopped:'⏹ Encerrado'", app_js)
         self.assertIn("stop-run", app_js)
         self.assertIn("/stop", app_js)
+        self.assertIn("/api/v1/models", app_js)
+        self.assertIn("/api/v1/phases", app_js)
 
         app_css = (web_dir / "app.css").read_text(encoding="utf-8")
         self.assertIn(".btn-danger", app_css)
         self.assertIn(".stopped", app_css)
+        self.assertIn(".priority-queue", app_css)
+        self.assertIn(".phases-checklist", app_css)
+
+    def test_models_discovery_for_configured_engines(self):
+        cfg_dir = self.repo / "config"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "harness.json").write_text(
+            json.dumps({"engines": ["codex", "antigravity"]}),
+            encoding="utf-8",
+        )
+
+        mock_bin = self.repo / "mock-bin"
+        mock_bin.mkdir(parents=True, exist_ok=True)
+        (mock_bin / "codex").write_text(
+            '#!/usr/bin/env bash\n'
+            'if [ "$1" = "debug" ] && [ "$2" = "models" ]; then\n'
+            '  echo \'{"models":[{"slug":"gpt-6.2-sol","display_name":"GPT-6.2-Sol","visibility":"list"},{"slug":"hidden-model","display_name":"Hidden","visibility":"hide"}]}\'\n'
+            'fi\n',
+            encoding="utf-8",
+        )
+        (mock_bin / "agy").write_text(
+            '#!/usr/bin/env bash\n'
+            'if [ "$1" = "models" ]; then\n'
+            '  printf "gemini-4-argon-high  Gemini 4 Argon (High)\\n"\n'
+            'fi\n',
+            encoding="utf-8",
+        )
+        (mock_bin / "codex").chmod(0o755)
+        (mock_bin / "agy").chmod(0o755)
+
+        self.start_server(extra_env={"PATH": f"{mock_bin}:{os.environ.get('PATH', '')}"})
+        status, data = self.request("/api/v1/models?refresh=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(data.get("configured_engines"), ["codex", "antigravity"])
+        codex_models = data["engines"]["codex"]["models"]
+        agy_models = data["engines"]["antigravity"]["models"]
+        self.assertEqual([m["route"] for m in codex_models], ["codex:gpt-6.2-sol"])
+        self.assertEqual([m["route"] for m in agy_models], ["antigravity:gemini-4-argon-high"])
+
+    def test_phases_listing_and_done_status(self):
+        import hashlib
+
+        init_dir = self.repo / ".spec" / "init"
+        init_dir.mkdir(parents=True, exist_ok=True)
+        phases_file = init_dir / "project-phases.md"
+        content = (
+            "# Project\n\n"
+            "## Phase 1: Setup\n"
+            "- [ ] Task A\n"
+            "- [ ] Task B\n\n"
+            "## Phase 2: Feature\n"
+            "- [ ] Task C\n"
+        )
+        phases_file.write_text(content, encoding="utf-8")
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+        progress_dir = self.phases / "progress"
+        progress_dir.mkdir(parents=True, exist_ok=True)
+        (progress_dir / f"project-phases.md-{digest}.progress").write_text("phase-01.md\n", encoding="utf-8")
+
+        self.start_server()
+        status, data = self.request("/api/v1/phases?input=.spec/init/project-phases.md")
+        self.assertEqual(status, 200)
+        phases = data.get("phases", [])
+        self.assertEqual(len(phases), 2)
+        self.assertEqual(phases[0]["number"], 1)
+        self.assertEqual(phases[0]["tasks_count"], 2)
+        self.assertTrue(phases[0]["done"])
+        self.assertEqual(phases[1]["number"], 2)
+        self.assertEqual(phases[1]["tasks_count"], 1)
+        self.assertFalse(phases[1]["done"])
+
+    def test_start_run_passes_phases_and_model_queue(self):
+        init_dir = self.repo / ".spec" / "init"
+        init_dir.mkdir(parents=True, exist_ok=True)
+        (init_dir / "project-phases.md").write_text("## Phase 1: A\n- [ ] T1\n## Phase 2: B\n- [ ] T2\n", encoding="utf-8")
+
+        scripts_dir = self.repo / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        args_file = self.repo / "ralph_args.txt"
+        mock_ralph = scripts_dir / "ralph.sh"
+        mock_ralph.write_text(
+            f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{args_file}"\n',
+            encoding="utf-8",
+        )
+        mock_ralph.chmod(0o755)
+
+        self.start_server()
+        status, data = self.request(
+            "/api/v1/runs",
+            method="POST",
+            data={
+                "input": ".spec/init/project-phases.md",
+                "phases": [2],
+                "model_queue": ["antigravity:gemini-4-argon-high", "codex:gpt-6.2-sol"],
+                "verify_queue": ["codex:gpt-6.2-sol"],
+            },
+        )
+        self.assertEqual(status, 202)
+        self.assertTrue(data.get("ok"))
+
+        deadline = time.time() + 3.0
+        while time.time() < deadline and not args_file.exists():
+            time.sleep(0.05)
+        self.assertTrue(args_file.exists())
+        args = args_file.read_text(encoding="utf-8").splitlines()
+        self.assertIn("--headless", args)
+        self.assertIn("--model-queue", args)
+        self.assertIn("antigravity:gemini-4-argon-high,codex:gpt-6.2-sol", args)
+        self.assertIn("--verify-queue", args)
+        self.assertIn("codex:gpt-6.2-sol", args)
+        self.assertIn("--phases", args)
+        self.assertIn("2", args)
+        self.assertIn(".spec/init/project-phases.md", args)
+
+    def test_start_run_uses_relative_feature_dir_and_saved_queue_fallback(self):
+        cfg_dir = self.repo / "config"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "harness.json").write_text(
+            json.dumps({
+                "engines": ["codex"],
+                "models": {"priority_queue": ["codex:gpt-6.2-sol"], "verify_queue": []},
+            }),
+            encoding="utf-8",
+        )
+        feat_dir = self.repo / ".spec" / "features" / "demo" / "phases" / "01-base"
+        feat_dir.mkdir(parents=True, exist_ok=True)
+        (feat_dir / "PHASES.md").write_text("## Phase 1: Base\n- [ ] Task A\n", encoding="utf-8")
+
+        scripts_dir = self.repo / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        args_file = self.repo / "ralph_args_feature.txt"
+        mock_ralph = scripts_dir / "ralph.sh"
+        mock_ralph.write_text(
+            f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{args_file}"\n',
+            encoding="utf-8",
+        )
+        mock_ralph.chmod(0o755)
+
+        self.start_server()
+        status, data = self.request(
+            "/api/v1/runs",
+            method="POST",
+            data={"input": ".spec/features/demo", "phases": [1]},
+        )
+        self.assertEqual(status, 202)
+        self.assertTrue(data.get("ok"))
+
+        deadline = time.time() + 3.0
+        while time.time() < deadline and not args_file.exists():
+            time.sleep(0.05)
+        self.assertTrue(args_file.exists())
+        args = args_file.read_text(encoding="utf-8").splitlines()
+        self.assertIn("codex:gpt-6.2-sol", args)
+        self.assertEqual(args[-1], ".spec/features/demo")
 
 
 if __name__ == "__main__":

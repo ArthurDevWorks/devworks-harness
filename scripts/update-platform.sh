@@ -9,11 +9,12 @@ CHECK_ONLY=false
 
 usage() {
   cat <<'EOF'
-Uso: scripts/update-platform.sh [--platform codex|claude|opencode|antigravity] [--root DIR] [--check]
+Uso: scripts/update-platform.sh [--platform <engines>] [--root DIR] [--check]
 
 Atualiza Skills e runtime de uma instalacao existente no projeto-alvo usando a
-versao disponivel neste checkout do DEVWORKS Harness. A plataforma e detectada
-pelos Skills instalados; se houver mais de uma, informe --platform.
+versao disponivel neste checkout do DEVWORKS Harness. Se --platform nao for
+informado, usa as engines registradas em config/harness.json ou detecta pelos
+Skills instalados.
 
 O script nao atualiza este repositorio com git pull e nao altera artefatos de
 trabalho do projeto, como .spec/, PHASES.md e .phases/.
@@ -32,12 +33,15 @@ require_value() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --platform)
+    --platform|--engines)
       require_value "$1" "${2:-}"
-      PLATFORM="$2"
+      PLATFORM="${PLATFORM:+$PLATFORM,}$2"
       shift 2
       ;;
-    --platform=*) PLATFORM="${1#*=}"; shift ;;
+    --platform=*|--engines=*)
+      PLATFORM="${PLATFORM:+$PLATFORM,}${1#*=}"
+      shift
+      ;;
     --root)
       require_value "$1" "${2:-}"
       ROOT="$2"
@@ -49,11 +53,6 @@ while [[ $# -gt 0 ]]; do
     *) echo "Opcao desconhecida: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
-
-case "$PLATFORM" in
-  ""|codex|claude|opencode|antigravity) ;;
-  *) echo "Plataforma invalida: $PLATFORM" >&2; usage >&2; exit 2 ;;
-esac
 
 if [ -n "$ROOT" ]; then
   if [ ! -d "$ROOT" ]; then
@@ -74,7 +73,7 @@ fi
 
 ENGINE_FILE="$TARGET_ROOT/config/devworks-harness-engine"
 if [ -f "$ENGINE_FILE" ]; then
-  echo "Ignorando a engine legada em $ENGINE_FILE; a engine agora é escolhida por execução."
+  echo "Ignorando a engine legada em $ENGINE_FILE; as engines agora ficam em config/harness.json."
 fi
 
 has_skill_set() {
@@ -85,21 +84,38 @@ has_skill_set() {
   done
 }
 
+PYTHON_CMD=()
+if command -v python3 >/dev/null 2>&1 && python3 -c '' </dev/null 2>/dev/null; then
+  PYTHON_CMD=(python3)
+elif [ -x /Library/Developer/CommandLineTools/usr/bin/python3 ] && arch -arm64 /Library/Developer/CommandLineTools/usr/bin/python3 -c '' </dev/null 2>/dev/null; then
+  PYTHON_CMD=(arch -arm64 /Library/Developer/CommandLineTools/usr/bin/python3)
+fi
+
+if [ -z "$PLATFORM" ] && [ -f "$TARGET_ROOT/config/harness.json" ] && [ "${#PYTHON_CMD[@]}" -gt 0 ]; then
+  PLATFORM=$("${PYTHON_CMD[@]}" - "$TARGET_ROOT/config/harness.json" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+    engines = d.get("engines") or []
+    if isinstance(engines, list):
+        print(",".join(str(e).strip() for e in engines if str(e).strip()))
+except Exception:
+    pass
+PY
+)
+fi
+
 if [ -z "$PLATFORM" ]; then
   detected=""
   if has_skill_set "$TARGET_ROOT/.claude/skills"; then
     detected="claude"
   fi
   if has_skill_set "$TARGET_ROOT/.opencode/skills"; then
-    if [ -n "$detected" ]; then
-      echo "Mais de uma instalacao de engine foi encontrada. Informe --platform." >&2
-      exit 1
-    fi
-    detected="opencode"
+    detected="${detected:+$detected,}opencode"
   fi
   if has_skill_set "$TARGET_ROOT/.agents/skills"; then
-    echo "A instalacao antiga em .agents/skills pode ser Codex ou Antigravity." >&2
-    echo "Informe --platform codex ou --platform antigravity." >&2
+    echo "A instalacao em .agents/skills pode ser Codex ou Antigravity${detected:+ (alem de $detected)}." >&2
+    echo "Informe --platform codex, --platform antigravity ou --platform codex,antigravity${detected:+,$detected}." >&2
     exit 1
   fi
   PLATFORM="$detected"
@@ -111,19 +127,7 @@ if [ -z "$PLATFORM" ]; then
   exit 1
 fi
 
-case "$PLATFORM" in
-  codex|antigravity) SKILLS_DEST="$TARGET_ROOT/.agents/skills" ;;
-  claude) SKILLS_DEST="$TARGET_ROOT/.claude/skills" ;;
-  opencode) SKILLS_DEST="$TARGET_ROOT/.opencode/skills" ;;
-esac
-
-if ! has_skill_set "$SKILLS_DEST" && [ ! -x "$TARGET_ROOT/scripts/ralph.sh" ]; then
-  echo "A engine foi identificada, mas a instalacao do Harness nao foi encontrada em $TARGET_ROOT." >&2
-  echo "Para a primeira instalacao, use scripts/install-platform.sh." >&2
-  exit 1
-fi
-
-echo "Atualizando DEVWORKS Harness em $TARGET_ROOT (engine: $PLATFORM)"
+echo "Atualizando DEVWORKS Harness em $TARGET_ROOT (engines: $PLATFORM)"
 
 INSTALL_ARGS=(--platform "$PLATFORM" --scope project --root "$TARGET_ROOT")
 if [ "$CHECK_ONLY" = true ]; then

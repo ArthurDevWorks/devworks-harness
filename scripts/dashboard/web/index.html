@@ -10,18 +10,71 @@
   <main class="shell">
     <header><p class="eyebrow">DEVWORKS</p><h1>RALPH <span>MONITOR</span></h1></header>
     <div id="notice" class="notice" role="status">Carregando estado do Ralph…</div>
-    <section class="toolbar" aria-label="Execução exibida"><label for="runs">Execução</label><select id="runs"><option>Carregando…</option></select><button id="stop-run" type="button" class="btn-danger" style="display:none" title="Encerrar a execução ativa do Ralph">Encerrar Ralph</button><span id="updated" class="muted"></span></section>
-    <section class="panel controls" aria-label="Configuração e execução">
-      <h2>CONFIGURAÇÃO E EXECUÇÃO</h2>
-      <label>Engine <select id="engine"><option value="codex">Codex</option><option value="claude">Claude</option><option value="opencode">OpenCode</option><option value="antigravity">Antigravity</option></select></label>
-      <label>Modelo de implementação <input id="implementation-model" maxlength="160" placeholder="Padrão da CLI"></label>
-      <label>Modelo de verificação <input id="verification-model" maxlength="160" placeholder="Padrão da CLI"></label>
-      <label>Limite implementação (min) <input id="implementation-limit" type="number" min="0" max="240" value="30"></label>
-      <label>Limite verificação (min) <input id="verification-limit" type="number" min="0" max="240" value="5"></label>
-      <label>Aviso sem saída (min) <input id="idle-limit" type="number" min="0" max="240" value="5"></label>
-      <label>PHASES.md <select id="input"><option value="">Selecione um input</option></select></label>
-      <button id="save-config" type="button">Salvar configuração</button><button id="start-run" type="button">Iniciar / retomar</button>
+    <section class="toolbar" aria-label="Execução exibida">
+      <label for="runs">Execução</label>
+      <select id="runs"><option>Carregando…</option></select>
+      <button id="stop-run" type="button" class="btn-danger" style="display:none" title="Encerrar a execução ativa do Ralph">Encerrar Ralph</button>
+      <span id="updated" class="muted"></span>
     </section>
+
+    <section class="panel setup-panel" aria-label="Configuração e execução">
+      <h2>CONFIGURAÇÃO E EXECUÇÃO</h2>
+      <div class="setup-grid">
+        <div class="setup-block">
+          <div class="block-head">
+            <h3>1. ENGINES &amp; PRIORIDADE DE MODELOS</h3>
+            <button id="refresh-models" type="button" title="Consultar novamente as CLIs das engines instaladas">Atualizar modelos</button>
+          </div>
+          <div id="engines-bar" class="engines-bar" aria-label="Engines configuradas"></div>
+          <div class="add-model-row">
+            <label>
+              Adicionar modelo à fila
+              <select id="model-picker"><option value="">Carregando modelos das CLIs…</option></select>
+            </label>
+            <button id="add-model" type="button">+ Adicionar</button>
+          </div>
+          <p class="muted field-hint">Ordem de uso: se o limite de um modelo/engine acabar, o Ralph muda automaticamente para o próximo da lista.</p>
+          <ol id="priority-queue" class="priority-queue" aria-label="Fila de prioridade de modelos"></ol>
+          <label class="verify-select-label">
+            Verificador (Gate 3)
+            <select id="verify-model-select">
+              <option value="">Seguir mesma fila de prioridade da implementação</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="setup-block">
+          <div class="block-head">
+            <h3>2. DOCUMENTO &amp; FASES A IMPLEMENTAR</h3>
+            <div class="phase-quick-actions">
+              <button id="phases-pending" type="button">Pendentes</button>
+              <button id="phases-all" type="button">Todas</button>
+              <button id="phases-none" type="button">Nenhuma</button>
+            </div>
+          </div>
+          <label>
+            PHASES.md / Feature
+            <select id="input"><option value="">Selecione um input</option></select>
+          </label>
+          <div id="phases-checklist" class="phases-checklist" aria-label="Fases disponíveis para seleção">
+            <p class="muted">Selecione um documento de fases acima.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="setup-footer">
+        <div class="limits-row">
+          <label>Limite impl. (min) <input id="implementation-limit" type="number" min="0" max="240" value="30"></label>
+          <label>Limite verif. (min) <input id="verification-limit" type="number" min="0" max="240" value="5"></label>
+          <label>Aviso sem saída (min) <input id="idle-limit" type="number" min="0" max="240" value="5"></label>
+        </div>
+        <div class="action-buttons">
+          <button id="save-config" type="button">Salvar configuração</button>
+          <button id="start-run" type="button" class="btn-primary">Iniciar execução</button>
+        </div>
+      </div>
+    </section>
+
     <div class="workspace">
       <div class="monitor-column">
         <section id="summary" class="summary" aria-live="polite"></section>

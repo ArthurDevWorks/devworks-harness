@@ -8,22 +8,28 @@ Executa fases planejadas com Codex, Claude Code, OpenCode ou Antigravity. O Harn
 scripts/install-platform.sh --platform all --scope project --root /caminho/do/projeto
 ```
 
-`all` instala os Skills de todas as CLIs disponíveis. Nenhuma plataforma fica
-registrada como padrão do projeto.
+`all` (ou lista separada por vírgula, como `--platform codex,antigravity`) instala os Skills das CLIs selecionadas e registra as engines habilitadas em `config/harness.json`.
 
 ## Uso
 
 Crie e revise o plano com `plan`, detalhe uma fase com `task-builder` e execute no projeto alvo:
 
 ```sh
+scripts/ralph.sh                          # abre o painel Ralph Web por padrão
+scripts/ralph.sh --headless --engine codex .spec/features/exemplo/phases/01-recurso/PHASES.md
+scripts/ralph.sh --model-queue antigravity:gemini-4-argon-high,codex:gpt-6.2-sol --phases 1,2
+```
+
+Também é possível configurar e rodar pelo terminal com `scripts/harness.sh`:
+
+```sh
 scripts/harness.sh configure
 scripts/harness.sh run .spec/features/exemplo/phases/01-recurso/PHASES.md
 ```
 
-Quando uma IA atingir o limite, escolha outra e retome:
+Quando uma IA atingir o limite, o Ralph avança automaticamente para o próximo item de `--model-queue` (ou `priority_queue` em `config/harness.json`), inclusive trocando de engine sem consumir ciclo de correção. Para retomar manualmente:
 
 ```sh
-scripts/harness.sh configure
 scripts/harness.sh resume .spec/features/exemplo/phases/01-recurso/PHASES.md
 ```
 
@@ -32,16 +38,14 @@ As fases concluídas e as alterações não commitadas ficam preservadas. Revise
 ## Ralph Web
 
 ```sh
-scripts/ralph-web.sh /caminho/do/projeto
+scripts/ralph.sh                          # ou scripts/ralph-web.sh /caminho/do/projeto
 ```
 
-Abra `http://127.0.0.1:7331` para escolher IA e modelos, salvar configuração, iniciar ou retomar um `PHASES.md`, acompanhar logs e encerrar a execução. O painel é local e aceita somente inputs dentro de `.spec/`.
+Abra `http://127.0.0.1:7331` para habilitar engines, montar a fila de prioridade de modelos (`priority_queue` e `verify_queue`), selecionar fases específicas, salvar configuração, acompanhar logs e encerrar a execução. O painel é local e aceita somente inputs dentro de `.spec/`.
 
 ## Configuração e desenvolvimento
 
-`config/harness.json` guarda modelos e limites de sessão. Escolha a engine em
-cada execução com `--engine`; flags e variáveis de ambiente continuam tendo
-prioridade. Use `scripts/ralph.sh --help` para todas as opções.
+`config/harness.json` guarda `engines`, filas de prioridade (`priority_queue` / `verify_queue`), modelos e limites de sessão. Flags CLI (`--engine`, `--model-queue`, `--verify-queue`, `--phases`, `--headless`) e variáveis de ambiente continuam tendo prioridade. Use `scripts/ralph.sh --help` para todas as opções.
 
 ```sh
 scripts/test-ralph.sh

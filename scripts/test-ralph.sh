@@ -138,12 +138,18 @@ if [ "$name" = "opencode" ] && [ "$verify" -eq 1 ]; then
 fi
 
 # Grava o modelo pedido para a sessao verificadora (assert do teste de modelo).
+if [ "$verify" -eq 1 ]; then
+  echo "$name:${model:-default}" >> "$state/verify_model_history"
+fi
 if [ "$verify" -eq 1 ] && [ -n "$model" ]; then
   echo "$model" > "$state/verify_model"
 fi
 if [ "$name" = "agy" ] && [ "$verify" -eq 0 ] && [ -n "$model" ]; then
   echo "$model" > "$state/agy_impl_model"
   echo "$model" >> "$state/agy_impl_model_history"
+fi
+if [ "$verify" -eq 0 ]; then
+  echo "$name:${model:-default}" >> "$state/engine_model_history"
 fi
 if [ "$verify" -eq 0 ] && [ -n "$model" ]; then
   echo "$model" > "$state/implementation_model"
@@ -1732,6 +1738,158 @@ if case_enabled universal-style-profile; then
   assert_not_contains "$impl_prompt" "Formato PHP" "prompt nao impoe formato PHP"
   assert_not_contains "$impl_prompt" "Query Builder" "prompt nao impoe API de banco"
   assert_not_contains "$impl_prompt" "Joomla" "prompt nao impoe convencao Joomla"
+fi
+
+# ---------------------------------------------------------------------------
+# 38. Selecao granular de fases (--phases)
+# ---------------------------------------------------------------------------
+if case_enabled phases-select; then
+  header "38. --phases executa apenas as fases selecionadas"
+  d=$(new_case phases-select)
+  rc=$(run_ralph "$d" ok --engine codex --phases 2 --test-cmd "$d/test.sh")
+  assert_eq 0 "$rc" "exit 0 com --phases 2"
+  assert_eq 1 "$(cat "$d/state/impl_calls")" "apenas 1 fase implementada"
+  assert_contains "$d/repo/.phases/state/run.tsv" "$(printf 'PHASE\t1\tskipped')" "fase 1 marcada como skipped"
+  assert_contains "$d/repo/.phases/state/run.tsv" "$(printf 'PHASE\t2\tdone')" "fase 2 marcada como done"
+  assert_not_contains "$d/repo/.phases/.progress" "phase-01.md" "phase-01 nao registrada como feita"
+  assert_contains "$d/repo/.phases/.progress" "phase-02.md" "phase-02 registrada como feita"
+fi
+
+# ---------------------------------------------------------------------------
+# 39. Fila multi-engine com failover automatico (antigravity -> codex)
+# ---------------------------------------------------------------------------
+if case_enabled cross-engine-failover; then
+  header "39. failover cross-engine na fila de prioridade"
+  d=$(new_case cross-engine-failover)
+  rc=$(run_ralph "$d" limit-generic --phases 1 --model-queue antigravity:agy-top,codex:gpt-6.2-sol --test-cmd "$d/test.sh" --max-cycles 1)
+  assert_eq 0 "$rc" "exit 0 apos failover cross-engine sem consumir ciclo"
+  assert_contains "$d/out.log" "Limite de uso atingido em antigravity:agy-top" "limite no antigravity detectado"
+  assert_contains "$d/out.log" "Continuando a mesma fase com codex:gpt-6.2-sol" "failover automatico para codex"
+  assert_contains "$d/state/engine_model_history" "agy:agy-top" "primeira tentativa usou antigravity"
+  assert_contains "$d/state/engine_model_history" "codex:gpt-6.2-sol" "failover executou codex"
+  assert_contains "$d/state/verify_model_history" "codex:gpt-6.2-sol" "verificador seguiu a fila disponivel"
+  assert_contains "$d/repo/.phases/state/run.tsv" "$(printf 'META\tfailovers\t1')" "contador de failovers atualizado"
+  assert_contains "$d/repo/.phases/state/run.tsv" "$(printf 'META\tengine\tcodex')" "estado reflete a engine ativa apos failover"
+fi
+
+# ---------------------------------------------------------------------------
+# 40. Instalacao multi-engine grava config/harness.json
+# ---------------------------------------------------------------------------
+if case_enabled install-multi-engine; then
+  header "40. install-platform.sh registra multiplas engines"
+  d="$TMP/install-multi-engine"
+  mkdir -p "$d/bin" "$d/target"
+  cat > "$d/bin/codex" <<'CLI'
+#!/usr/bin/env bash
+echo "codex 1.0.0"
+CLI
+  cat > "$d/bin/agy" <<'CLI'
+#!/usr/bin/env bash
+echo "agy 1.0.0"
+CLI
+  chmod +x "$d/bin/codex" "$d/bin/agy"
+
+  PATH="$d/bin:$PATH" "$ROOT/scripts/install-platform.sh" \
+    --platform codex,antigravity --scope project --root "$d/target" > "$d/install.log" 2>&1
+  assert_eq 0 "$?" "instalacao multi-engine retornou 0"
+  assert_contains "$d/target/config/harness.json" '"codex"' "config/harness.json inclui codex"
+  assert_contains "$d/target/config/harness.json" '"antigravity"' "config/harness.json inclui antigravity"
+  test -s "$d/target/.agents/skills/plan/SKILL.md" && ok "skills instalados no projeto" || bad "skills instalados no projeto"
+  test -x "$d/target/scripts/ralph.sh" && ok "ralph.sh instalado no projeto" || bad "ralph.sh instalado no projeto"
+fi
+
+# ---------------------------------------------------------------------------
+# 41. Chamada padrao do ralph.sh (sem flags CLI) delega para ralph-web.sh
+# ---------------------------------------------------------------------------
+if case_enabled ralph-web-default; then
+  header "41. ralph.sh sem flags CLI abre o painel web por padrao"
+  d="$TMP/ralph-web-default"
+  mkdir -p "$d/scripts"
+  cp "$RALPH" "$d/scripts/ralph.sh"
+  chmod +x "$d/scripts/ralph.sh"
+  cat > "$d/scripts/ralph-web.sh" <<'WEB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$(dirname "$0")/web_called_with.txt"
+WEB
+  chmod +x "$d/scripts/ralph-web.sh"
+  (cd "$d" && bash "$d/scripts/ralph.sh" --no-open .spec/init/project-phases.md)
+  assert_eq 0 "$?" "ralph.sh delegou sem erro"
+  assert_contains "$d/scripts/web_called_with.txt" "--no-open --input .spec/init/project-phases.md" "repassou flags e input para ralph-web.sh"
+fi
+
+# ---------------------------------------------------------------------------
+# 42. Variavel RALPH_MODEL_QUEUE ativa modo headless sem abrir painel web
+# ---------------------------------------------------------------------------
+if case_enabled env-model-queue-headless; then
+  header "42. RALPH_MODEL_QUEUE ativa execucao headless sem flags CLI"
+  d=$(new_case env-model-queue-headless)
+  rc=$(RALPH_MODEL_QUEUE="codex:gpt-6.2-sol" run_ralph "$d" ok --test-cmd "$d/test.sh")
+  assert_eq 0 "$rc" "exit 0 com RALPH_MODEL_QUEUE via ambiente"
+  assert_contains "$d/state/engine_model_history" "codex:gpt-6.2-sol" "modelo da env chegou a execucao"
+fi
+
+# ---------------------------------------------------------------------------
+# 43. harness.sh configure preserva engines/queues e harness.sh run roda headless
+# ---------------------------------------------------------------------------
+if case_enabled harness-preserve-config; then
+  header "43. harness.sh preserva config/harness.json e executa headless"
+  d=$(new_case harness-preserve-config)
+  mkdir -p "$d/repo/config" "$d/repo/scripts/engines"
+  cp "$RALPH" "$d/repo/scripts/ralph.sh"
+  cp "$ROOT/scripts/harness.sh" "$d/repo/scripts/harness.sh"
+  cp "$ROOT/scripts/engines/"*.sh "$d/repo/scripts/engines/"
+  cp "$ROOT/config/model-policy.tsv" "$d/repo/config/model-policy.tsv"
+  chmod +x "$d/repo/scripts/ralph.sh" "$d/repo/scripts/harness.sh" "$d/repo/scripts/engines/"*.sh
+
+  cat > "$d/repo/config/harness.json" <<'JSON'
+{
+  "engines": ["codex", "antigravity"],
+  "models": {
+    "implementation": "",
+    "verification": "",
+    "priority_queue": ["codex:gpt-6.2-sol"],
+    "verify_queue": []
+  },
+  "limits": {
+    "implementation_minutes": 30,
+    "verification_minutes": 5,
+    "idle_warning_minutes": 5
+  }
+}
+JSON
+
+  (cd "$d/repo" && printf '\n\n\n\n' | bash "$d/repo/scripts/harness.sh" configure > /dev/null)
+  assert_contains "$d/repo/config/harness.json" '"codex"' "configure preservou engines"
+  assert_contains "$d/repo/config/harness.json" '"codex:gpt-6.2-sol"' "configure preservou priority_queue"
+
+  rc=0
+  (
+    cd "$d/repo" || exit 1
+    env -u RALPH_TEST_CMD -u RALPH_MAX_CYCLES \
+    PATH="$d/bin:$PATH" MOCK_STATE="$d/state" MOCK_SCENARIO="ok" MOCK_TEST_CMD="$d/test.sh" \
+      bash "$d/repo/scripts/harness.sh" run --test-cmd "$d/test.sh" > "$d/out.log" 2>&1
+  ) || rc=$?
+  assert_eq 0 "$rc" "harness.sh run executou headless e retornou 0"
+  assert_contains "$d/state/engine_model_history" "codex:gpt-6.2-sol" "harness.sh run usou priority_queue salva"
+fi
+
+# ---------------------------------------------------------------------------
+# 44. Feature em diretorio gera mesmo input_hash com caminho absoluto ou relativo
+# ---------------------------------------------------------------------------
+if case_enabled feature-dir-hash-parity; then
+  header "44. diretorio de feature gera mesmo hash absoluto e relativo"
+  d=$(new_case feature-dir-hash-parity)
+  mkdir -p "$d/repo/.spec/features/f1/phases/01-base"
+  cat > "$d/repo/.spec/features/f1/phases/01-base/PHASES.md" <<'PH'
+## Phase 1: Base
+
+- [ ] **Task:** cria arquivo
+PH
+  rc=$(run_ralph "$d" ok --engine codex --test-cmd "$d/test.sh" "$d/repo/.spec/features/f1")
+  assert_eq 0 "$rc" "exit 0 com caminho absoluto do diretorio de feature"
+  rc2=$(run_ralph "$d" ok --engine codex --test-cmd "$d/test.sh" ".spec/features/f1")
+  assert_eq 0 "$rc2" "exit 0 na segunda execucao com caminho relativo"
+  assert_eq 1 "$(cat "$d/state/impl_calls")" "segunda execucao reaproveitou o mesmo .progress (sem reimplementar)"
 fi
 
 # ---------------------------------------------------------------------------

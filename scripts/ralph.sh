@@ -22,10 +22,17 @@
 # Uso:
 #   ./ralph.sh [opcoes] [arquivo-ou-diretorio-da-feature]
 #
+# Sem flags de execucao direta, abre o painel web local no navegador para
+# selecionar engines/modelos por prioridade, fases e acompanhar a execucao.
+#
 # Opcoes:
+#   --headless               executa direto no terminal sem abrir o painel web
 #   --engine codex|claude|opencode|antigravity
-#                            engine de implementacao (default: plataforma
-#                            registrada na instalacao; codex como fallback)
+#                            engine de implementacao (ativa execucao headless)
+#   --model-queue <rotas>    fila de prioridade engine:modelo separada por virgula
+#                            (ex: antigravity:gemini-4-argon-high,codex:gpt-6.2-sol)
+#   --verify-queue <rotas>   fila opcional para o verificador (Gate 3)
+#   --phases <lista>         executa apenas as fases informadas (ex: --phases 1,3,4)
 #   --profile routine|standard|complex
 #                            perfil do modelo Antigravity (default: standard)
 #   --from N                 comeca na fase N (limpa do progresso as fases >= N)
@@ -36,6 +43,8 @@
 #   --dashboard              painel ao vivo no terminal (requer ralph-watch.sh
 #                            ao lado deste script); os logs vao para
 #                            .phases/logs/ralph.log
+#   --port N                 porta do painel web (default: 7331)
+#   --no-open                inicia o painel web sem abrir o navegador automatically
 #
 # Observabilidade:
 #   O estado do run e SEMPRE publicado em .phases/state/ (run.tsv + live.tsv),
@@ -134,9 +143,11 @@
 set -euo pipefail
 
 ENGINE=""
+ENGINE_EXPLICIT=false
 INPUT_FILE=""
 INPUT_SOURCE=""
 FROM_PHASE=0
+SELECTED_PHASES="${RALPH_PHASES:-}"
 KEEP_GOING=false
 TEST_CMD_FLAG=""
 MAX_CYCLES="${RALPH_MAX_CYCLES:-3}"
@@ -144,27 +155,70 @@ VERIFY_MODE="${RALPH_VERIFY:-always}"
 VERIFY_MODEL=""
 EXECUTION_PROFILE="${RALPH_EXECUTION_PROFILE:-standard}"
 IMPLEMENTATION_MODEL="${RALPH_IMPLEMENTATION_MODEL:-}"
+MODEL_QUEUE_ARG="${RALPH_MODEL_QUEUE:-}"
+VERIFY_QUEUE_ARG="${RALPH_VERIFY_QUEUE:-}"
 DASHBOARD=false
+HEADLESS=false
+[ "${RALPH_HEADLESS:-0}" = "1" ] && HEADLESS=true
+if [ -n "$MODEL_QUEUE_ARG" ] || [ -n "$VERIFY_QUEUE_ARG" ] || [ -n "$SELECTED_PHASES" ] || [ -n "$IMPLEMENTATION_MODEL" ]; then
+  HEADLESS=true
+fi
+WEB_PORT=""
+WEB_NO_OPEN=false
+
+require_arg() {
+  local opt="$1" val="${2:-}"
+  if [ -z "$val" ] || [[ "$val" = --* ]]; then
+    echo "Valor ausente para $opt." >&2
+    exit 2
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --engine)      ENGINE="$2"; shift 2 ;;
-    --engine=*)    ENGINE="${1#*=}"; shift ;;
-    --profile)     EXECUTION_PROFILE="$2"; shift 2 ;;
-    --profile=*)   EXECUTION_PROFILE="${1#*=}"; shift ;;
-    --from)        FROM_PHASE="$2"; shift 2 ;;
-    --from=*)      FROM_PHASE="${1#*=}"; shift ;;
-    --max-cycles)  MAX_CYCLES="$2"; shift 2 ;;
-    --max-cycles=*) MAX_CYCLES="${1#*=}"; shift ;;
-    --test-cmd)    TEST_CMD_FLAG="$2"; shift 2 ;;
-    --test-cmd=*)  TEST_CMD_FLAG="${1#*=}"; shift ;;
-    --keep-going)  KEEP_GOING=true; shift ;;
-    --no-verify)   VERIFY_MODE="off"; shift ;;
-    --dashboard)   DASHBOARD=true; shift ;;
-    -h|--help)     sed -n '2,82p' "$0"; exit 0 ;;
-    *)             INPUT_FILE="$1"; shift ;;
+    --headless)      HEADLESS=true; shift ;;
+    --engine)        require_arg "$1" "${2:-}"; ENGINE="$2"; ENGINE_EXPLICIT=true; HEADLESS=true; shift 2 ;;
+    --engine=*)      ENGINE="${1#*=}"; ENGINE_EXPLICIT=true; HEADLESS=true; shift ;;
+    --model-queue)   require_arg "$1" "${2:-}"; MODEL_QUEUE_ARG="$2"; HEADLESS=true; shift 2 ;;
+    --model-queue=*) MODEL_QUEUE_ARG="${1#*=}"; HEADLESS=true; shift ;;
+    --verify-queue)  require_arg "$1" "${2:-}"; VERIFY_QUEUE_ARG="$2"; HEADLESS=true; shift 2 ;;
+    --verify-queue=*) VERIFY_QUEUE_ARG="${1#*=}"; HEADLESS=true; shift ;;
+    --phases)        require_arg "$1" "${2:-}"; SELECTED_PHASES="$2"; HEADLESS=true; shift 2 ;;
+    --phases=*)      SELECTED_PHASES="${1#*=}"; HEADLESS=true; shift ;;
+    --profile)       require_arg "$1" "${2:-}"; EXECUTION_PROFILE="$2"; HEADLESS=true; shift 2 ;;
+    --profile=*)     EXECUTION_PROFILE="${1#*=}"; HEADLESS=true; shift ;;
+    --from)          require_arg "$1" "${2:-}"; FROM_PHASE="$2"; HEADLESS=true; shift 2 ;;
+    --from=*)        FROM_PHASE="${1#*=}"; HEADLESS=true; shift ;;
+    --max-cycles)    require_arg "$1" "${2:-}"; MAX_CYCLES="$2"; HEADLESS=true; shift 2 ;;
+    --max-cycles=*)  MAX_CYCLES="${1#*=}"; HEADLESS=true; shift ;;
+    --test-cmd)      require_arg "$1" "${2:-}"; TEST_CMD_FLAG="$2"; HEADLESS=true; shift 2 ;;
+    --test-cmd=*)    TEST_CMD_FLAG="${1#*=}"; HEADLESS=true; shift ;;
+    --keep-going)    KEEP_GOING=true; HEADLESS=true; shift ;;
+    --no-verify)     VERIFY_MODE="off"; HEADLESS=true; shift ;;
+    --dashboard)     DASHBOARD=true; HEADLESS=true; shift ;;
+    --port)          require_arg "$1" "${2:-}"; WEB_PORT="$2"; shift 2 ;;
+    --port=*)        WEB_PORT="${1#*=}"; shift ;;
+    --no-open)       WEB_NO_OPEN=true; shift ;;
+    -h|--help)       sed -n '2,82p' "$0"; exit 0 ;;
+    *)               INPUT_FILE="$1"; shift ;;
   esac
 done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "${RALPH_LIB_ONLY:-0}" != "1" ] && [ "$HEADLESS" = false ] && [ -x "$SCRIPT_DIR/ralph-web.sh" ]; then
+  web_args=()
+  [ -n "$WEB_PORT" ] && web_args+=(--port "$WEB_PORT")
+  [ "$WEB_NO_OPEN" = true ] && web_args+=(--no-open)
+  if [ -n "$INPUT_FILE" ]; then
+    if [ -d "$INPUT_FILE" ] && { [ -d "$INPUT_FILE/.spec" ] || [ -d "$INPUT_FILE/scripts" ]; }; then
+      web_args+=("$INPUT_FILE")
+    else
+      web_args+=(--input "$INPUT_FILE")
+    fi
+  fi
+  exec "$SCRIPT_DIR/ralph-web.sh" "${web_args[@]}"
+fi
 
 PHASES_ROOT=".phases"
 RUNS_DIR="$PHASES_ROOT/runs"
@@ -195,15 +249,58 @@ HARNESS_CONFIG="$SCRIPT_DIR/../config/harness.json"
 
 # A configuracao compartilhada pelo menu e pelo Ralph Web so preenche valores
 # ausentes: flags e variaveis de ambiente continuam sendo a autoridade final.
+CONFIG_PRIORITY_QUEUE=""
+CONFIG_VERIFY_QUEUE=""
 if [ -s "$HARNESS_CONFIG" ]; then
-  config_impl_model=$(sed -nE 's/^[[:space:]]*"implementation"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$HARNESS_CONFIG" | head -1)
-  config_verify_model=$(sed -nE 's/^[[:space:]]*"verification"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$HARNESS_CONFIG" | head -1)
-  config_impl_minutes=$(sed -nE 's/^[[:space:]]*"implementation_minutes"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$HARNESS_CONFIG" | head -1)
-  config_verify_minutes=$(sed -nE 's/^[[:space:]]*"verification_minutes"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$HARNESS_CONFIG" | head -1)
-  [ -z "$IMPLEMENTATION_MODEL" ] && [ -n "$config_impl_model" ] && IMPLEMENTATION_MODEL="$config_impl_model"
-  [ -z "${RALPH_VERIFY_MODEL:-}" ] && [ -n "$config_verify_model" ] && VERIFY_MODEL="$config_verify_model"
-  [ -z "${RALPH_IMPLEMENTATION_TIMEOUT:-}" ] && [ -n "$config_impl_minutes" ] && IMPLEMENTATION_TIMEOUT=$((config_impl_minutes * 60))
-  [ -z "${RALPH_VERIFICATION_TIMEOUT:-}" ] && [ -n "$config_verify_minutes" ] && VERIFICATION_TIMEOUT=$((config_verify_minutes * 60))
+  PYTHON_CMD=()
+  if command -v python3 >/dev/null 2>&1 && python3 -c '' </dev/null 2>/dev/null; then
+    PYTHON_CMD=(python3)
+  elif [ -x /Library/Developer/CommandLineTools/usr/bin/python3 ] && arch -arm64 /Library/Developer/CommandLineTools/usr/bin/python3 -c '' </dev/null 2>/dev/null; then
+    PYTHON_CMD=(arch -arm64 /Library/Developer/CommandLineTools/usr/bin/python3)
+  fi
+  if [ "${#PYTHON_CMD[@]}" -gt 0 ]; then
+    IFS='|' read -r config_impl_model config_verify_model config_impl_minutes config_verify_minutes config_default_engine CONFIG_PRIORITY_QUEUE CONFIG_VERIFY_QUEUE < <(
+      "${PYTHON_CMD[@]}" - "$HARNESS_CONFIG" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    d = {}
+m = d.get("models") or {}
+l = d.get("limits") or {}
+engines = d.get("engines") or []
+pq = m.get("priority_queue") or []
+vq = m.get("verify_queue") or []
+print("|".join([
+    str(m.get("implementation") or ""),
+    str(m.get("verification") or ""),
+    str(l.get("implementation_minutes") or ""),
+    str(l.get("verification_minutes") or ""),
+    str(engines[0]) if engines else "",
+    ",".join(str(x) for x in pq if x),
+    ",".join(str(x) for x in vq if x),
+]))
+PY
+    ) || true
+  else
+    config_impl_model=$(sed -nE 's/^[[:space:]]*"implementation"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$HARNESS_CONFIG" | head -1)
+    config_verify_model=$(sed -nE 's/^[[:space:]]*"verification"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$HARNESS_CONFIG" | head -1)
+    config_impl_minutes=$(sed -nE 's/^[[:space:]]*"implementation_minutes"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$HARNESS_CONFIG" | head -1)
+    config_verify_minutes=$(sed -nE 's/^[[:space:]]*"verification_minutes"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$HARNESS_CONFIG" | head -1)
+    config_default_engine=""
+  fi
+  [ -z "$IMPLEMENTATION_MODEL" ] && [ -n "${config_impl_model:-}" ] && IMPLEMENTATION_MODEL="$config_impl_model"
+  [ -z "${RALPH_VERIFY_MODEL:-}" ] && [ -n "${config_verify_model:-}" ] && VERIFY_MODEL="$config_verify_model"
+  [ -z "${RALPH_IMPLEMENTATION_TIMEOUT:-}" ] && [ -n "${config_impl_minutes:-}" ] && IMPLEMENTATION_TIMEOUT=$((config_impl_minutes * 60))
+  [ -z "${RALPH_VERIFICATION_TIMEOUT:-}" ] && [ -n "${config_verify_minutes:-}" ] && VERIFICATION_TIMEOUT=$((config_verify_minutes * 60))
+  [ -z "$ENGINE" ] && [ -n "${config_default_engine:-}" ] && ENGINE="$config_default_engine"
+fi
+
+if [ -z "$MODEL_QUEUE_ARG" ] && [ "$ENGINE_EXPLICIT" = false ] && [ -z "${RALPH_IMPLEMENTATION_MODEL:-}" ] && [ -n "$CONFIG_PRIORITY_QUEUE" ]; then
+  MODEL_QUEUE_ARG="$CONFIG_PRIORITY_QUEUE"
+fi
+if [ -z "$VERIFY_QUEUE_ARG" ] && [ "$ENGINE_EXPLICIT" = false ] && [ -z "${RALPH_VERIFY_MODEL:-}" ] && [ -n "$CONFIG_VERIFY_QUEUE" ]; then
+  VERIFY_QUEUE_ARG="$CONFIG_VERIFY_QUEUE"
 fi
 
 if [ -z "$ENGINE" ]; then
@@ -215,9 +312,9 @@ SAIL_BIN=""
 LIMIT_WAITS=0
 ACTIVE_MODEL=""
 MODEL_FAILOVERS=0
-declare -a IMPLEMENTATION_MODELS=()
-declare -a VERIFY_MODELS=()
-declare -A DISABLED_MODELS=()
+declare -a IMPLEMENTATION_ROUTES=()
+declare -a VERIFY_ROUTES=()
+declare -A DISABLED_ROUTES=()
 # Arquivo da fase corrente: o watcher do stream usa os titulos das tasks para
 # casar um arquivo escrito com a task que o menciona.
 CURRENT_PHASE_FILE=""
@@ -258,20 +355,70 @@ format_duration() {
 # Preflight
 # ---------------------------------------------------------------------------
 
-engine_binary() {
-  case "$ENGINE" in
-    codex|claude|opencode) printf '%s' "$ENGINE" ;;
+engine_binary_for() {
+  case "$1" in
+    codex|claude|opencode) printf '%s' "$1" ;;
     antigravity)           printf '%s' 'agy' ;;
   esac
 }
 
-engine_install_hint() {
-  case "$ENGINE" in
+engine_binary() {
+  engine_binary_for "$ENGINE"
+}
+
+engine_install_hint_for() {
+  case "$1" in
     codex)       printf '%s' 'npm install -g @openai/codex' ;;
     claude)      printf '%s' 'npm install -g @anthropic-ai/claude-code' ;;
     opencode)    printf '%s' 'https://opencode.ai/docs' ;;
     antigravity) printf '%s' 'https://antigravity.google/docs/cli/install/' ;;
   esac
+}
+
+engine_install_hint() {
+  engine_install_hint_for "$ENGINE"
+}
+
+route_engine() {
+  local route="$1" prefix
+  if [[ "$route" == *:* ]]; then
+    prefix="${route%%:*}"
+    case "$prefix" in
+      codex|claude|opencode|antigravity)
+        printf '%s' "$prefix"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s' "$ENGINE"
+}
+
+route_model() {
+  local route="$1" prefix
+  if [[ "$route" == *:* ]]; then
+    prefix="${route%%:*}"
+    case "$prefix" in
+      codex|claude|opencode|antigravity)
+        printf '%s' "${route#*:}"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s' "$route"
+}
+
+normalize_route() {
+  local raw="$1" prefix
+  if [[ "$raw" == *:* ]]; then
+    prefix="${raw%%:*}"
+    case "$prefix" in
+      codex|claude|opencode|antigravity)
+        printf '%s' "$raw"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s:%s' "$ENGINE" "$raw"
 }
 
 policy_models() {
@@ -287,56 +434,97 @@ policy_models() {
   ' "$MODEL_POLICY"
 }
 
-load_model_policy() {
-  IMPLEMENTATION_MODELS=()
-  VERIFY_MODELS=()
-
-  [ "$ENGINE" = "antigravity" ] || return 0
-
-  case "$EXECUTION_PROFILE" in
-    routine|standard|complex) ;;
-    *)
-      fail "Perfil invalido: $EXECUTION_PROFILE. Use routine, standard ou complex."
-      exit 1
-      ;;
-  esac
-
-  if [ -n "$IMPLEMENTATION_MODEL" ]; then
-    IMPLEMENTATION_MODELS=("$IMPLEMENTATION_MODEL")
-  else
-    while IFS= read -r model; do IMPLEMENTATION_MODELS+=("$model"); done \
-      < <(policy_models "execution-$EXECUTION_PROFILE")
-  fi
-
-  if [ -n "${RALPH_VERIFY_MODEL:-}" ]; then
-    VERIFY_MODELS=("$RALPH_VERIFY_MODEL")
-  else
-    while IFS= read -r model; do VERIFY_MODELS+=("$model"); done \
-      < <(policy_models verify)
-  fi
-
-  if [ "${#IMPLEMENTATION_MODELS[@]}" -eq 0 ]; then
-    fail "Politica sem modelos para execution-$EXECUTION_PROFILE: $MODEL_POLICY"
-    exit 1
-  fi
-  if [ "${#VERIFY_MODELS[@]}" -eq 0 ]; then
-    fail "Politica sem modelos para verify: $MODEL_POLICY"
-    exit 1
-  fi
-
-  IMPLEMENTATION_MODEL="${IMPLEMENTATION_MODELS[0]}"
-  VERIFY_MODEL="${VERIFY_MODELS[0]}"
+parse_route_csv() {
+  local csv="$1" item trimmed
+  local -a items=()
+  IFS=',' read -r -a items <<< "$csv"
+  for item in "${items[@]}"; do
+    trimmed="${item#"${item%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [ -n "$trimmed" ] || continue
+    printf '%s\n' "$(normalize_route "$trimmed")"
+  done
 }
 
-next_available_model() {
-  local mode="$1" model
-  local -a routes=()
-  if [ "$mode" = "verify" ]; then routes=("${VERIFY_MODELS[@]}")
-  else routes=("${IMPLEMENTATION_MODELS[@]}"); fi
+load_model_policy() {
+  IMPLEMENTATION_ROUTES=()
+  VERIFY_ROUTES=()
 
-  for model in "${routes[@]}"; do
-    if [ -z "${DISABLED_MODELS[$model]:-}" ]; then
-      printf '%s' "$model"
+  if [ -n "$MODEL_QUEUE_ARG" ]; then
+    local r
+    while IFS= read -r r; do
+      [ -n "$r" ] && IMPLEMENTATION_ROUTES+=("$r")
+    done < <(parse_route_csv "$MODEL_QUEUE_ARG")
+    if [ "${#IMPLEMENTATION_ROUTES[@]}" -eq 0 ]; then
+      fail "Fila de modelos vazia (--model-queue)."
+      exit 1
+    fi
+    if [ "$ENGINE_EXPLICIT" = false ]; then
+      ENGINE=$(route_engine "${IMPLEMENTATION_ROUTES[0]}")
+    fi
+    IMPLEMENTATION_MODEL=$(route_model "${IMPLEMENTATION_ROUTES[0]}")
+  elif [ -n "$IMPLEMENTATION_MODEL" ]; then
+    IMPLEMENTATION_ROUTES=("$(normalize_route "$IMPLEMENTATION_MODEL")")
+    IMPLEMENTATION_MODEL=$(route_model "${IMPLEMENTATION_ROUTES[0]}")
+  elif [ "$ENGINE" = "antigravity" ]; then
+    case "$EXECUTION_PROFILE" in
+      routine|standard|complex) ;;
+      *)
+        fail "Perfil invalido: $EXECUTION_PROFILE. Use routine, standard ou complex."
+        exit 1
+        ;;
+    esac
+    local model
+    while IFS= read -r model; do IMPLEMENTATION_ROUTES+=("antigravity:$model"); done \
+      < <(policy_models "execution-$EXECUTION_PROFILE")
+    if [ "${#IMPLEMENTATION_ROUTES[@]}" -eq 0 ]; then
+      fail "Politica sem modelos para execution-$EXECUTION_PROFILE: $MODEL_POLICY"
+      exit 1
+    fi
+    IMPLEMENTATION_MODEL=$(route_model "${IMPLEMENTATION_ROUTES[0]}")
+  else
+    IMPLEMENTATION_ROUTES=("$ENGINE:")
+  fi
+
+  if [ -n "$VERIFY_QUEUE_ARG" ]; then
+    local vr
+    while IFS= read -r vr; do
+      [ -n "$vr" ] && VERIFY_ROUTES+=("$vr")
+    done < <(parse_route_csv "$VERIFY_QUEUE_ARG")
+  elif [ -n "${RALPH_VERIFY_MODEL:-}" ]; then
+    VERIFY_ROUTES=("$(normalize_route "$RALPH_VERIFY_MODEL")")
+    VERIFY_MODEL=$(route_model "${VERIFY_ROUTES[0]}")
+  elif [ -n "$VERIFY_MODEL" ]; then
+    VERIFY_ROUTES=("$(normalize_route "$VERIFY_MODEL")")
+    VERIFY_MODEL=$(route_model "${VERIFY_ROUTES[0]}")
+  elif [ -n "$MODEL_QUEUE_ARG" ]; then
+    VERIFY_ROUTES=("${IMPLEMENTATION_ROUTES[@]}")
+  elif [ "$ENGINE" = "antigravity" ]; then
+    local vmodel
+    while IFS= read -r vmodel; do VERIFY_ROUTES+=("antigravity:$vmodel"); done \
+      < <(policy_models verify)
+    if [ "${#VERIFY_ROUTES[@]}" -eq 0 ]; then
+      fail "Politica sem modelos para verify: $MODEL_POLICY"
+      exit 1
+    fi
+    VERIFY_MODEL=$(route_model "${VERIFY_ROUTES[0]}")
+  elif [ "$ENGINE" = "claude" ]; then
+    VERIFY_MODEL="sonnet"
+    VERIFY_ROUTES=("claude:sonnet")
+  else
+    VERIFY_ROUTES=("$ENGINE:")
+  fi
+}
+
+next_available_route() {
+  local mode="$1" route
+  local -a routes=()
+  if [ "$mode" = "verify" ]; then routes=("${VERIFY_ROUTES[@]}")
+  else routes=("${IMPLEMENTATION_ROUTES[@]}"); fi
+
+  for route in "${routes[@]}"; do
+    if [ -z "${DISABLED_ROUTES[$route]:-}" ]; then
+      printf '%s' "$route"
       return 0
     fi
   done
@@ -380,7 +568,14 @@ resolve_input_file() {
       fi
 
       mkdir -p "$PHASES_ROOT/inputs"
-      input_hash=$({ for file in "${phase_files[@]}"; do sha256sum "$file"; done; } | sha256sum | cut -c1-12)
+      local repo_root
+      repo_root=$(pwd -P)
+      input_hash=$({ for file in "${phase_files[@]}"; do
+        local abs_file rel_file
+        abs_file="$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")"
+        rel_file="${abs_file#"$repo_root"/}"
+        sha256sum "$rel_file" 2>/dev/null || sha256sum "$file"
+      done; } | sha256sum | cut -c1-12)
       slug="$(basename "$feature_dir")"
       aggregate_file="$PHASES_ROOT/inputs/${slug}-${input_hash}.md"
       aggregate_tmp="$aggregate_file.$$"
@@ -581,6 +776,41 @@ resolve_test_cmd() {
   fi
 }
 
+is_phase_selected() {
+  local num=$((10#$1)) item trimmed
+  [ -z "$SELECTED_PHASES" ] && return 0
+  local -a items=()
+  IFS=',' read -r -a items <<< "$SELECTED_PHASES"
+  for item in "${items[@]}"; do
+    trimmed="${item//[[:space:]]/}"
+    [ -n "$trimmed" ] || continue
+    if [[ "$trimmed" =~ ^[0-9]+$ ]] && [ "$((10#$trimmed))" -eq "$num" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+validate_selected_phases() {
+  [ -z "$SELECTED_PHASES" ] && return 0
+  local -a items=()
+  local item trimmed count=0
+  IFS=',' read -r -a items <<< "$SELECTED_PHASES"
+  for item in "${items[@]}"; do
+    trimmed="${item//[[:space:]]/}"
+    [ -n "$trimmed" ] || continue
+    if ! [[ "$trimmed" =~ ^[0-9]+$ ]]; then
+      fail "Valor invalido em --phases: '$trimmed'. Use numeros separados por virgula (ex: --phases 1,3)."
+      exit 1
+    fi
+    count=$((count + 1))
+  done
+  if [ "$count" -eq 0 ]; then
+    fail "Nenhuma fase informada em --phases."
+    exit 1
+  fi
+}
+
 preflight_checks() {
   case "$ENGINE" in
     codex|claude|opencode|antigravity) ;;
@@ -595,6 +825,8 @@ preflight_checks() {
     exit 1
   fi
 
+  validate_selected_phases
+
   if ! [[ "$MAX_CYCLES" =~ ^[0-9]+$ ]] || [ "$MAX_CYCLES" -lt 1 ]; then
     fail "Valor invalido para --max-cycles: '$MAX_CYCLES'. Use um inteiro >= 1."
     exit 1
@@ -608,29 +840,29 @@ preflight_checks() {
       ;;
   esac
 
-  if [ "$ENGINE" = "antigravity" ] && [ ! -f "$MODEL_POLICY" ] && [ -z "$IMPLEMENTATION_MODEL" ]; then
+  if [ "$ENGINE" = "antigravity" ] && [ -z "$MODEL_QUEUE_ARG" ] && [ ! -f "$MODEL_POLICY" ] && [ -z "$IMPLEMENTATION_MODEL" ]; then
     fail "Politica de modelos nao encontrada: $MODEL_POLICY"
     exit 1
   fi
 
   load_model_policy
 
-  # Verificacao e leitura + checklist: nao precisa do modelo de implementacao.
-  # No codex nao ha default seguro de modelo barato — so aplica se pedido.
-  if [ "$ENGINE" = "antigravity" ]; then
-    : # definido pela politica de modelos
-  elif [ -n "${RALPH_VERIFY_MODEL:-}" ]; then
-    VERIFY_MODEL="$RALPH_VERIFY_MODEL"
-  elif [[ "$ENGINE" == "claude" ]] && [ -z "$VERIFY_MODEL" ]; then
-    VERIFY_MODEL="sonnet"
-  fi
-
-  local engine_bin
-  engine_bin=$(engine_binary)
-  if ! command -v "$engine_bin" &> /dev/null; then
-    fail "$engine_bin CLI nao encontrado para o engine $ENGINE. Instale/consulte: $(engine_install_hint)"
-    exit 1
-  fi
+  local -A checked_engines=()
+  local route eng engine_bin
+  for route in "$ENGINE:" "${IMPLEMENTATION_ROUTES[@]+"${IMPLEMENTATION_ROUTES[@]}"}" "${VERIFY_ROUTES[@]+"${VERIFY_ROUTES[@]}"}"; do
+    eng=$(route_engine "$route")
+    [ -z "${checked_engines[$eng]:-}" ] || continue
+    checked_engines[$eng]=1
+    if [ ! -f "$SCRIPT_DIR/engines/$eng.sh" ]; then
+      fail "Engine invalida nas rotas de modelos: $eng"
+      exit 1
+    fi
+    engine_bin=$(engine_binary_for "$eng")
+    if ! command -v "$engine_bin" &> /dev/null; then
+      fail "$engine_bin CLI nao encontrado para o engine $eng. Instale/consulte: $(engine_install_hint_for "$eng")"
+      exit 1
+    fi
+  done
 
   if ! git rev-parse --is-inside-work-tree &> /dev/null 2>&1; then
     fail "Requer um repositorio git."
@@ -796,10 +1028,22 @@ mark_phase_done() {
   echo "$1" >> "$PROGRESS_FILE"
 }
 
-# --from N tambem limpa do progresso as fases >= N (re-rodar de proposito).
+# --from N e --phases limpam do progresso apenas as fases selecionadas para execucao.
 apply_from_override() {
-  [ "$FROM_PHASE" -gt 1 ] || return 0
   [ -f "$PROGRESS_FILE" ] || return 0
+
+  if [ -n "$SELECTED_PHASES" ]; then
+    local kept="" file num _rest
+    while IFS='|' read -r file num _rest; do
+      if ! is_phase_selected "$num" && grep -qxF "$file" "$PROGRESS_FILE"; then
+        kept+="$file"$'\n'
+      fi
+    done < <(manifest_entries)
+    printf '%s' "$kept" > "$PROGRESS_FILE"
+    log "--phases $SELECTED_PHASES: progresso das fases selecionadas limpo para execucao"
+  fi
+
+  [ "$FROM_PHASE" -gt 1 ] || return 0
 
   local kept="" file num _rest
   while IFS='|' read -r file num _rest; do
@@ -929,7 +1173,7 @@ state_init() {
     PH_ATTEMPT[$num]="0"
     PH_GATES[$num]="pending pending pending pending"
 
-    if [ "$num" -lt "$FROM_PHASE" ]; then
+    if [ "$num" -lt "$FROM_PHASE" ] || ! is_phase_selected "$num"; then
       PH_STATUS[$num]="skipped"
     elif is_phase_done "$file"; then
       PH_STATUS[$num]="done"
@@ -1486,10 +1730,13 @@ PREAMBLE
 # Codex nao expoe stream equivalente. Claude, OpenCode e Antigravity preservam
 # os marcadores como texto dentro dos respectivos eventos JSON.
 task_protocol_block() {
-  case "$ENGINE" in
-    claude|opencode|antigravity) ;;
-    *) return 0 ;;
-  esac
+  local stream_capable=false r eng
+  for r in "${IMPLEMENTATION_ROUTES[@]+"${IMPLEMENTATION_ROUTES[@]}"}"; do
+    eng=$(route_engine "$r")
+    case "$eng" in claude|opencode|antigravity) stream_capable=true; break ;; esac
+  done
+  case "$ENGINE" in claude|opencode|antigravity) stream_capable=true ;; esac
+  $stream_capable || return 0
   cat <<'PROTO'
 
 ## Protocolo de progresso (obrigatorio)
@@ -1747,65 +1994,71 @@ wait_for_reset() {
 # Engine
 # ---------------------------------------------------------------------------
 
+apply_active_route() {
+  local route="$1" target_engine
+  target_engine=$(route_engine "$route")
+  ACTIVE_MODEL=$(route_model "$route")
+  if [ "$target_engine" != "$ENGINE" ]; then
+    ENGINE="$target_engine"
+    load_engine_adapter
+  fi
+  export RALPH_ENGINE="$ENGINE"
+  ENGINE_MODEL_ARGS=()
+  [ -n "$ACTIVE_MODEL" ] && ENGINE_MODEL_ARGS=(--model "$ACTIVE_MODEL")
+}
+
 # run_engine <prompt_file> <log_file> <mode: impl|verify>
 # Loop de resiliencia a limite de uso: nao consome ciclo de correcao.
 run_engine() {
   local prompt_file="$1" log_file="$2" mode="$3"
 
-  export RALPH_ENGINE="$ENGINE"
   export RALPH_PHASE_MAX_ATTEMPTS="$MAX_CYCLES"
   if [ "$mode" = "verify" ]; then
     export RALPH_SESSION_TIMEOUT_SECONDS="$VERIFICATION_TIMEOUT"
   else
     export RALPH_SESSION_TIMEOUT_SECONDS="$IMPLEMENTATION_TIMEOUT"
   fi
-  if [ -z "${RALPH_ANTIGRAVITY_TIMEOUT:-}" ] && [ "${RALPH_SESSION_TIMEOUT_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
-    ANTIGRAVITY_TIMEOUT="${RALPH_SESSION_TIMEOUT_SECONDS}s"
+  if [ -z "${RALPH_ANTIGRAVITY_TIMEOUT:-}" ]; then
+    if [ "${RALPH_SESSION_TIMEOUT_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+      ANTIGRAVITY_TIMEOUT="${RALPH_SESSION_TIMEOUT_SECONDS}s"
+    else
+      ANTIGRAVITY_TIMEOUT="30m"
+    fi
   fi
 
-  ENGINE_MODEL_ARGS=()
-  if [ "$ENGINE" = "antigravity" ]; then
-    ACTIVE_MODEL=$(next_available_model "$mode") || ACTIVE_MODEL=""
-  elif [[ "$mode" == "verify" ]] && [ -n "$VERIFY_MODEL" ]; then
-    ACTIVE_MODEL="$VERIFY_MODEL"
-  elif [[ "$mode" == "impl" ]] && [ -n "$IMPLEMENTATION_MODEL" ]; then
-    ACTIVE_MODEL="$IMPLEMENTATION_MODEL"
-  else
-    ACTIVE_MODEL=""
-  fi
-
-  [ -n "$ACTIVE_MODEL" ] && ENGINE_MODEL_ARGS=(--model "$ACTIVE_MODEL")
+  local active_route
+  active_route=$(next_available_route "$mode") || active_route="$ENGINE:"
+  apply_active_route "$active_route"
 
   while true; do
     local rc=0
+    META[engine]="$ENGINE"
+    META[model]="${ACTIVE_MODEL:-—}"
     if [ -n "$ACTIVE_MODEL" ]; then
-      META[model]="$ACTIVE_MODEL"
       state_meta activity "engine $ENGINE · modelo $ACTIVE_MODEL"
+    else
+      state_meta activity "engine $ENGINE · modelo padrão"
     fi
     adapter_run_engine_once "$prompt_file" "$log_file" "$mode" || rc=$?
 
     local reset_epoch
     if reset_epoch=$(detect_usage_limit "$log_file"); then
-      if [ "$ENGINE" = "antigravity" ] && [ -n "$ACTIVE_MODEL" ]; then
-        DISABLED_MODELS[$ACTIVE_MODEL]=1
-        local previous_model="$ACTIVE_MODEL" next_model=""
-        next_model=$(next_available_model "$mode") || next_model=""
-        if [ -n "$next_model" ]; then
-          MODEL_FAILOVERS=$((MODEL_FAILOVERS + 1))
-          META[failovers]="$MODEL_FAILOVERS"
-          ACTIVE_MODEL="$next_model"
-          ENGINE_MODEL_ARGS=(--model "$ACTIVE_MODEL")
-          warn "Limite de uso atingido em $previous_model. Continuando a mesma fase com $ACTIVE_MODEL."
-          state_meta activity "failover: $previous_model → $ACTIVE_MODEL"
-          continue
-        fi
+      DISABLED_ROUTES[$active_route]=1
+      local previous_route="$active_route" next_route=""
+      next_route=$(next_available_route "$mode") || next_route=""
+      if [ -n "$next_route" ] && [ "$next_route" != "$previous_route" ]; then
+        MODEL_FAILOVERS=$((MODEL_FAILOVERS + 1))
+        META[failovers]="$MODEL_FAILOVERS"
+        active_route="$next_route"
+        apply_active_route "$active_route"
+        warn "Limite de uso atingido em $previous_route. Continuando a mesma fase com $active_route."
+        state_meta activity "failover: $previous_route → $active_route"
+        continue
       fi
       wait_for_reset "$reset_epoch"
-      DISABLED_MODELS=()
-      if [ "$ENGINE" = "antigravity" ]; then
-        ACTIVE_MODEL=$(next_available_model "$mode") || ACTIVE_MODEL=""
-        [ -n "$ACTIVE_MODEL" ] && ENGINE_MODEL_ARGS=(--model "$ACTIVE_MODEL")
-      fi
+      DISABLED_ROUTES=()
+      active_route=$(next_available_route "$mode") || active_route="$ENGINE:"
+      apply_active_route "$active_route"
       continue
     fi
 
@@ -1923,7 +2176,17 @@ gate3_independent_verify() {
   fi
 
   GATE3_RAN=1
-  log "Gate 3 — sessao verificadora independente ($expected tasks${VERIFY_MODEL:+, modelo: $VERIFY_MODEL})"
+  local verify_hint=""
+  if [ "${#VERIFY_ROUTES[@]}" -gt 0 ]; then
+    local v_route v_eng v_mod
+    v_route=$(next_available_route verify 2>/dev/null || printf '%s' "${VERIFY_ROUTES[0]}")
+    v_eng=$(route_engine "$v_route")
+    v_mod=$(route_model "$v_route")
+    if [ "$v_eng" = "$ENGINE" ]; then verify_hint="$v_mod"; else verify_hint="$v_route"; fi
+  elif [ -n "$VERIFY_MODEL" ]; then
+    verify_hint="$VERIFY_MODEL"
+  fi
+  log "Gate 3 — sessao verificadora independente ($expected tasks${verify_hint:+, modelo: $verify_hint})"
 
   local prompt_file
   prompt_file=$(build_verify_prompt "$phase_file" "$cycle")
@@ -2162,8 +2425,8 @@ on_exit() {
 LAST_GATE=""
 
 main() {
-  load_engine_adapter
   preflight_checks
+  load_engine_adapter
   prepare_run_layout
   # A partir daqui o lock pertence a este processo. Registra o cleanup antes
   # de qualquer operacao que ainda possa falhar para nao deixar um lock orfao.
@@ -2186,15 +2449,28 @@ main() {
     exit 1
   fi
 
+  local file num title selected_count=0
+  while IFS='|' read -r file num title; do
+    is_phase_selected "$num" && selected_count=$((selected_count + 1))
+  done < <(manifest_entries)
+
+  if [ -n "$SELECTED_PHASES" ] && [ "$selected_count" -eq 0 ]; then
+    fail "Nenhuma fase de $INPUT_FILE corresponde a --phases $SELECTED_PHASES."
+    exit 1
+  fi
+
   echo ""
-  log "$total_phases fases para implementar (engine: $ENGINE, max-cycles: $MAX_CYCLES)"
+  log "$total_phases fases no documento (engine inicial: $ENGINE, max-cycles: $MAX_CYCLES)"
+  [ -n "$SELECTED_PHASES" ] && log "Fases selecionadas: $SELECTED_PHASES"
+  [ "${#IMPLEMENTATION_ROUTES[@]}" -gt 1 ] && log "Fila de prioridade: ${IMPLEMENTATION_ROUTES[*]}"
   [ "$FROM_PHASE" -gt 1 ] && log "Iniciando a partir da fase $FROM_PHASE"
   echo ""
 
-  local file num title
   while IFS='|' read -r file num title; do
     if [ "$num" -lt "$FROM_PHASE" ]; then
       echo -e "  ${BLUE}[$num] $title (pulada por --from)${NC}"
+    elif ! is_phase_selected "$num"; then
+      echo -e "  ${BLUE}[$num] $title (nao selecionada)${NC}"
     elif is_phase_done "$file"; then
       echo -e "  ${GREEN}[$num] $title (ja completada)${NC}"
     else
@@ -2218,6 +2494,12 @@ main() {
 
     if [ "$num" -lt "$FROM_PHASE" ]; then
       log "Pulando Phase $num: $title (antes de --from $FROM_PHASE)"
+      skipped_phases+=("$title")
+      continue
+    fi
+
+    if ! is_phase_selected "$num"; then
+      log "Pulando Phase $num: $title (nao selecionada)"
       skipped_phases+=("$title")
       continue
     fi

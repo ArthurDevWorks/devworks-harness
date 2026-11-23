@@ -94,12 +94,24 @@ Para as outras CLIs, a recomendação é usar o seletor do próprio engine:
 | Claude Code | `haiku` | `sonnet` | `opus` ou `fable` para trabalho longo e complexo |
 | OpenCode | Flash/Luna rápido | Sonnet ou GPT-6.1 Sol | Opus ou Fable |
 
-As recomendações não configuram automaticamente os modelos dessas três CLIs
-no Ralph: atualmente, só o Antigravity recebe rotas e failover de modelo do
-Ralph. No OpenCode, confirme o ID completo `provedor/modelo` com `opencode
-models`; no Claude Code, aliases como `sonnet`, `opus` e `fable` resolvem para
-o modelo mais recente compatível com o provedor. Disponibilidade pode variar
-por plano, provedor e versão do cliente. Consulte os guias oficiais de
+As recomendações acima definem os perfis padrão do Antigravity (`config/model-policy.tsv`),
+mas o Ralph agora suporta **fila de prioridade multi-engine** (`--model-queue` e
+`--verify-queue` na CLI, ou `priority_queue` e `verify_queue` em
+`config/harness.json` / Ralph Web) para failover automático entre quaisquer
+engines habilitadas:
+
+```bash
+# Abre o painel web local por padrão (sem flags headless)
+./scripts/ralph.sh
+
+# Fila cross-engine e seleção granular de fases em modo terminal
+./scripts/ralph.sh --model-queue antigravity:gemini-4-argon-high,codex:gpt-6.2-sol --phases 1,3
+```
+
+No OpenCode, confirme o ID completo `provedor/modelo` com `opencode models`; no
+Claude Code, aliases como `sonnet`, `opus` e `haiku` resolvem para o modelo
+mais recente compatível com o provedor. Disponibilidade pode variar por plano,
+provedor e versão do cliente. Consulte os guias oficiais de
 [modelos do Codex](https://developers.openai.com/codex/models),
 [configuração do Claude Code](https://code.claude.com/docs/en/model-config) e
 [modelos do OpenCode](https://opencode.ai/docs/models/).

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Servidor HTTP local e somente leitura para o estado do Ralph."""
+"""Servidor HTTP local para configurar, iniciar, acompanhar e encerrar o Ralph."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import time
@@ -16,43 +18,109 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 RUN_ID_RE = re.compile(r"^run-[A-Za-z0-9_-]+$")
+PHASE_HEADING_RE = re.compile(r"^##\s+Phase\s+([0-9]+):\s*(.*)$")
+ANY_H2_RE = re.compile(r"^##\s+")
+TASK_ITEM_RE = re.compile(r"^\s*-\s+\[[ xX]\]")
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+VALID_ENGINES = ("codex", "claude", "opencode", "antigravity")
 MAX_LOG_BYTES = 256 * 1024
+MODELS_CACHE_TTL_SECONDS = 300
 
 
 class RalphStore:
     def __init__(self, repo: Path) -> None:
         self.repo = repo.resolve()
         self.phases = self.repo / ".phases"
+        self._models_cache: tuple[float, dict] | None = None
 
     @property
     def config_path(self) -> Path:
         return self.repo / "config" / "harness.json"
 
+    @staticmethod
+    def _default_config() -> dict:
+        return {
+            "engines": [],
+            "models": {
+                "implementation": "",
+                "verification": "",
+                "priority_queue": [],
+                "verify_queue": [],
+            },
+            "limits": {
+                "implementation_minutes": 30,
+                "verification_minutes": 5,
+                "idle_warning_minutes": 5,
+            },
+        }
+
     def config(self) -> dict:
-        default = {"models": {"implementation": "", "verification": ""},
-                   "limits": {"implementation_minutes": 30, "verification_minutes": 5, "idle_warning_minutes": 5}}
+        default = self._default_config()
         try:
             stored = json.loads(self.config_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return default
-        default.update(stored)
-        return default
+        if not isinstance(stored, dict):
+            return default
+        merged = dict(default)
+        if isinstance(stored.get("engines"), list):
+            merged["engines"] = [e for e in stored["engines"] if e in VALID_ENGINES]
+        if isinstance(stored.get("models"), dict):
+            merged["models"] = {**default["models"], **stored["models"]}
+        if isinstance(stored.get("limits"), dict):
+            merged["limits"] = {**default["limits"], **stored["limits"]}
+        return merged
 
     def save_config(self, value: object) -> tuple[bool, str]:
         if not isinstance(value, dict):
             return False, "Configuração inválida"
-        models, limits = value.get("models", {}), value.get("limits", {})
+        existing = self.config()
+        models = value.get("models", {})
+        limits = value.get("limits", {})
         if not isinstance(models, dict) or not isinstance(limits, dict):
             return False, "Configuração inválida"
+
+        raw_engines = value.get("engines")
+        if isinstance(raw_engines, list):
+            engines = [str(e) for e in raw_engines if str(e) in VALID_ENGINES]
+        else:
+            engines = existing.get("engines", [])
+
+        def clean_queue(raw: object) -> list[str]:
+            if not isinstance(raw, list):
+                return []
+            seen: set[str] = set()
+            result: list[str] = []
+            for item in raw:
+                text = str(item).strip()[:200]
+                if text and text not in seen:
+                    seen.add(text)
+                    result.append(text)
+            return result
+
         def bounded_int(raw: object, fallback: int) -> int:
             try:
                 return max(0, min(240, int(raw)))
             except (TypeError, ValueError):
                 return fallback
 
-        normalized = {"models": {"implementation": str(models.get("implementation", ""))[:160], "verification": str(models.get("verification", ""))[:160]},
-                      "limits": {key: bounded_int(limits.get(key), fallback) for key, fallback in
-                                 (("implementation_minutes", 30), ("verification_minutes", 5), ("idle_warning_minutes", 5))}}
+        normalized = {
+            "engines": engines,
+            "models": {
+                "implementation": str(models.get("implementation", ""))[:160],
+                "verification": str(models.get("verification", ""))[:160],
+                "priority_queue": clean_queue(models.get("priority_queue", existing["models"].get("priority_queue", []))),
+                "verify_queue": clean_queue(models.get("verify_queue", existing["models"].get("verify_queue", []))),
+            },
+            "limits": {
+                key: bounded_int(limits.get(key), fallback)
+                for key, fallback in (
+                    ("implementation_minutes", 30),
+                    ("verification_minutes", 5),
+                    ("idle_warning_minutes", 5),
+                )
+            },
+        }
         try:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             self.config_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -60,11 +128,357 @@ class RalphStore:
             return False, "Não foi possível salvar a configuração"
         return True, "Configuração salva"
 
+    @staticmethod
+    def _engine_binary(engine: str) -> str:
+        return "agy" if engine == "antigravity" else engine
+
+    def _active_engines(self) -> list[str]:
+        configured = self.config().get("engines", [])
+        if configured:
+            return [e for e in configured if e in VALID_ENGINES]
+        installed = [e for e in VALID_ENGINES if shutil.which(self._engine_binary(e))]
+        return installed if installed else list(VALID_ENGINES)
+
+    @staticmethod
+    def _clean_cli_output(raw: str) -> list[str]:
+        lines: list[str] = []
+        for chunk in raw.splitlines():
+            part = chunk.split("\r")[-1]
+            part = ANSI_ESCAPE_RE.sub("", part).strip()
+            if part:
+                lines.append(part)
+        return lines
+
+    def _discover_antigravity_models(self) -> tuple[str, list[dict]]:
+        models: list[dict] = []
+        seen: set[str] = set()
+        if shutil.which("agy"):
+            try:
+                proc = subprocess.run(
+                    ["agy", "models"],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    stdin=subprocess.DEVNULL,
+                )
+                if proc.returncode == 0:
+                    for line in self._clean_cli_output(proc.stdout):
+                        if line.lower().startswith("fetching ") or line.startswith("-"):
+                            continue
+                        parts = line.split(None, 1)
+                        if not parts:
+                            continue
+                        model_id = parts[0].strip()
+                        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._:-]+$", model_id):
+                            continue
+                        label = parts[1].strip() if len(parts) > 1 else model_id
+                        if model_id not in seen:
+                            seen.add(model_id)
+                            models.append({
+                                "engine": "antigravity",
+                                "id": model_id,
+                                "label": label,
+                                "route": f"antigravity:{model_id}",
+                            })
+                    if models:
+                        return "agy models", models
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        # Fallback: config/model-policy.tsv quando offline ou em ambiente sem agy models
+        policy_path = self.repo / "config" / "model-policy.tsv"
+        if policy_path.is_file():
+            try:
+                for line in policy_path.read_text(encoding="utf-8").splitlines():
+                    if not line or line.startswith("#"):
+                        continue
+                    cols = line.split("|")
+                    if cols[0] not in {"execution-routine", "execution-standard", "execution-complex", "verify"}:
+                        continue
+                    for model_id in cols[1:]:
+                        model_id = model_id.strip()
+                        if model_id and model_id not in seen:
+                            seen.add(model_id)
+                            models.append({
+                                "engine": "antigravity",
+                                "id": model_id,
+                                "label": model_id,
+                                "route": f"antigravity:{model_id}",
+                            })
+            except OSError:
+                pass
+        return "model-policy.tsv", models
+
+    def _discover_codex_models(self) -> tuple[str, list[dict]]:
+        payload: object = None
+        source = "codex debug models"
+        if shutil.which("codex"):
+            try:
+                proc = subprocess.run(
+                    ["codex", "debug", "models"],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    stdin=subprocess.DEVNULL,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    payload = json.loads(proc.stdout)
+            except (OSError, subprocess.SubprocessError, ValueError):
+                payload = None
+
+        if payload is None:
+            cache_file = Path.home() / ".codex" / "models_cache.json"
+            if cache_file.is_file():
+                try:
+                    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+                    source = "models_cache.json"
+                except (OSError, ValueError):
+                    payload = None
+
+        models: list[dict] = []
+        seen: set[str] = set()
+        raw_list = payload.get("models", []) if isinstance(payload, dict) else (payload if isinstance(payload, list) else [])
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            if item.get("visibility") == "hide":
+                continue
+            model_id = str(item.get("slug") or item.get("id") or "").strip()
+            if not model_id or model_id in seen:
+                continue
+            seen.add(model_id)
+            label = str(item.get("display_name") or item.get("name") or model_id).strip()
+            models.append({
+                "engine": "codex",
+                "id": model_id,
+                "label": label,
+                "route": f"codex:{model_id}",
+            })
+        return source, models
+
+    def _discover_opencode_models(self) -> tuple[str, list[dict]]:
+        models: list[dict] = []
+        seen: set[str] = set()
+        if shutil.which("opencode"):
+            try:
+                proc = subprocess.run(
+                    ["opencode", "models"],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    stdin=subprocess.DEVNULL,
+                )
+                if proc.returncode == 0:
+                    for line in self._clean_cli_output(proc.stdout):
+                        token = line.split()[0]
+                        if "/" not in token and ":" not in token:
+                            continue
+                        if token not in seen:
+                            seen.add(token)
+                            models.append({
+                                "engine": "opencode",
+                                "id": token,
+                                "label": token,
+                                "route": f"opencode:{token}",
+                            })
+                    if models:
+                        return "opencode models", models
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return "opencode", models
+
+    def _discover_claude_models(self) -> tuple[str, list[dict]]:
+        aliases = [
+            ("sonnet", "Claude Sonnet (alias padrão CLI)"),
+            ("opus", "Claude Opus (alias CLI)"),
+            ("haiku", "Claude Haiku (alias CLI)"),
+            ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+            ("claude-opus-4-6", "Claude Opus 4.6"),
+            ("claude-haiku-4-5", "Claude Haiku 4.5"),
+        ]
+        models = [
+            {"engine": "claude", "id": mid, "label": label, "route": f"claude:{mid}"}
+            for mid, label in aliases
+        ]
+        return "claude cli aliases", models
+
+    def discover_models(self, force_refresh: bool = False) -> dict:
+        now = time.time()
+        configured = self._active_engines()
+        if (
+            not force_refresh
+            and self._models_cache is not None
+            and (now - self._models_cache[0]) < MODELS_CACHE_TTL_SECONDS
+            and self._models_cache[1].get("configured_engines") == configured
+        ):
+            return self._models_cache[1]
+
+        engines_data: dict[str, dict] = {}
+        flat: list[dict] = []
+        for engine in configured:
+            installed = shutil.which(self._engine_binary(engine)) is not None
+            if engine == "antigravity":
+                source, items = self._discover_antigravity_models()
+            elif engine == "codex":
+                source, items = self._discover_codex_models()
+            elif engine == "opencode":
+                source, items = self._discover_opencode_models()
+            else:
+                source, items = self._discover_claude_models()
+            engines_data[engine] = {
+                "installed": installed,
+                "source": source,
+                "models": items,
+            }
+            flat.extend(items)
+
+        payload = {
+            "configured_engines": configured,
+            "engines": engines_data,
+            "flat": flat,
+            "fetched_at": int(now),
+        }
+        self._models_cache = (now, payload)
+        return payload
+
     def inputs(self) -> list[str]:
         root = self.repo / ".spec"
         if not root.is_dir():
             return []
-        return [str(path.relative_to(self.repo)) for path in root.rglob("PHASES.md") if path.is_file()]
+        found: list[str] = []
+        seen: set[str] = set()
+
+        def add_rel(path: Path) -> None:
+            rel = str(path.relative_to(self.repo))
+            if rel not in seen:
+                seen.add(rel)
+                found.append(rel)
+
+        init_phases = root / "init" / "project-phases.md"
+        if init_phases.is_file():
+            add_rel(init_phases)
+        legacy_phases = root / "project-phases.md"
+        if legacy_phases.is_file():
+            add_rel(legacy_phases)
+
+        features_dir = root / "features"
+        if features_dir.is_dir():
+            for feature in sorted(features_dir.iterdir()):
+                if not feature.is_dir():
+                    continue
+                phases_dir = feature / "phases"
+                if phases_dir.is_dir() and any(phases_dir.glob("*/PHASES.md")):
+                    add_rel(feature)
+
+        for path in sorted(root.rglob("PHASES.md")):
+            if path.is_file():
+                add_rel(path)
+        return found
+
+    def _resolve_input_candidate(self, input_path: str) -> Path | None:
+        if not isinstance(input_path, str) or not input_path.strip():
+            return None
+        candidate = (self.repo / input_path).resolve()
+        spec_root = (self.repo / ".spec").resolve()
+        if candidate != spec_root and spec_root not in candidate.parents:
+            return None
+        if not candidate.exists():
+            return None
+        return candidate
+
+    def _combined_input_text_and_progress_name(self, candidate: Path) -> tuple[str, str]:
+        if candidate.is_dir():
+            phases_dir = candidate if candidate.name == "phases" else (candidate / "phases")
+            feature_dir = candidate.parent if candidate.name == "phases" else candidate
+            phase_files = sorted(
+                path for path in phases_dir.glob("*/PHASES.md") if path.is_file()
+            )
+            if not phase_files:
+                return "", ""
+            # Espelha exatamente o hash composto usado em ralph.sh (linhas 383-385)
+            h_inputs = hashlib.sha256()
+            combined_parts: list[str] = []
+            for pfile in phase_files:
+                raw_bytes = pfile.read_bytes()
+                digest = hashlib.sha256(raw_bytes).hexdigest()
+                rel_from_repo = str(pfile.relative_to(self.repo))
+                # ralph.sh passa o caminho usado em find "$phases_dir"
+                h_inputs.update(f"{digest}  {rel_from_repo}\n".encode("utf-8"))
+                combined_parts.append(raw_bytes.decode("utf-8", errors="replace"))
+                combined_parts.append("\n\n## Combined input boundary\n\n")
+            combined_text = "".join(combined_parts)
+            slug = feature_dir.name
+            input_hash = h_inputs.hexdigest()[:12]
+            agg_name = f"{slug}-{input_hash}.md"
+            agg_hash = hashlib.sha256(combined_text.encode("utf-8")).hexdigest()[:12]
+            return combined_text, f"{agg_name}-{agg_hash}.progress"
+
+        raw_bytes = candidate.read_bytes()
+        text = raw_bytes.decode("utf-8", errors="replace")
+        file_hash = hashlib.sha256(raw_bytes).hexdigest()[:12]
+        return text, f"{candidate.name}-{file_hash}.progress"
+
+    def phases_for_input(self, input_path: str) -> tuple[bool, dict]:
+        candidate = self._resolve_input_candidate(input_path)
+        if candidate is None:
+            return False, {"error": "Input inválido ou fora de .spec"}
+
+        text, progress_filename = self._combined_input_text_and_progress_name(candidate)
+        if not text:
+            return False, {"error": "Nenhum arquivo de fases encontrado"}
+
+        done_slugs: set[str] = set()
+        if progress_filename:
+            progress_file = self.phases / "progress" / progress_filename
+            if progress_file.is_file():
+                try:
+                    done_slugs = {
+                        line.strip()
+                        for line in progress_file.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    }
+                except OSError:
+                    pass
+            elif candidate.is_dir():
+                # Fallback se o caminho no hash do ralph.sh tiver prefixo distinto
+                prefix = f"{candidate.name}-"
+                progress_dir = self.phases / "progress"
+                if progress_dir.is_dir():
+                    for pfile in sorted(progress_dir.glob(f"{prefix}*.progress"), reverse=True):
+                        try:
+                            done_slugs = {
+                                line.strip()
+                                for line in pfile.read_text(encoding="utf-8").splitlines()
+                                if line.strip()
+                            }
+                            break
+                        except OSError:
+                            pass
+
+        extracted: list[dict] = []
+        current_phase: dict | None = None
+        for line in text.splitlines():
+            m = PHASE_HEADING_RE.match(line)
+            if m:
+                num = int(m.group(1))
+                title = m.group(2).strip()
+                slug = f"phase-{num:02d}.md"
+                current_phase = {
+                    "number": num,
+                    "slug": slug,
+                    "title": title,
+                    "tasks_count": 0,
+                    "done": slug in done_slugs,
+                }
+                extracted.append(current_phase)
+                continue
+            if ANY_H2_RE.match(line):
+                current_phase = None
+                continue
+            if current_phase is not None and TASK_ITEM_RE.match(line):
+                current_phase["tasks_count"] += 1
+
+        return True, {"input": input_path, "phases": extracted}
 
     def start_run(self, value: object) -> tuple[bool, str]:
         if self.current_id():
@@ -74,27 +488,81 @@ class RalphStore:
         if not isinstance(value, dict):
             return False, "Pedido inválido"
         input_path = value.get("input", "")
-        if not isinstance(input_path, str):
-            return False, "Input inválido"
-        candidate = (self.repo / input_path).resolve()
-        spec_root = (self.repo / ".spec").resolve()
-        if candidate != spec_root and spec_root not in candidate.parents:
-            return False, "O input deve estar dentro de .spec"
-        if not candidate.exists():
-            return False, "Input não encontrado"
-        engine = value.get("engine")
-        if engine not in {"codex", "claude", "opencode", "antigravity"}:
-            return False, "Escolha uma engine para esta execução"
+        candidate = self._resolve_input_candidate(input_path if isinstance(input_path, str) else "")
+        if candidate is None:
+            return False, "Input inválido, não encontrado ou fora de .spec"
+
+        raw_queue = value.get("model_queue")
+        model_queue: list[str] = []
+        if isinstance(raw_queue, list):
+            for item in raw_queue:
+                text = str(item).strip()
+                if text:
+                    model_queue.append(text)
+
+        raw_verify_queue = value.get("verify_queue")
+        verify_queue: list[str] = []
+        if isinstance(raw_verify_queue, list):
+            for item in raw_verify_queue:
+                text = str(item).strip()
+                if text:
+                    verify_queue.append(text)
+
         config = self.config()
-        command = [str(self.repo / "scripts" / "ralph.sh"), "--engine", engine, str(candidate)]
+        engine = value.get("engine")
+        if not model_queue and engine not in VALID_ENGINES:
+            saved_queue = config["models"].get("priority_queue") or []
+            if saved_queue:
+                model_queue = [str(item).strip() for item in saved_queue if str(item).strip()]
+            elif config.get("engines"):
+                engine = config["engines"][0]
+            else:
+                return False, "Escolha uma engine ou adicione modelos na fila de prioridade"
+
+        raw_phases = value.get("phases")
+        selected_phases: list[str] = []
+        if isinstance(raw_phases, list):
+            for item in raw_phases:
+                try:
+                    num = int(item)
+                    if num >= 0:
+                        selected_phases.append(str(num))
+                except (TypeError, ValueError):
+                    return False, "Lista de fases selecionadas inválida"
+            if len(raw_phases) == 0:
+                return False, "Selecione ao menos uma fase para implementar"
+
+        command = [str(self.repo / "scripts" / "ralph.sh"), "--headless"]
+        if model_queue:
+            command.extend(["--model-queue", ",".join(model_queue)])
+        elif engine in VALID_ENGINES:
+            command.extend(["--engine", str(engine)])
+
+        if verify_queue:
+            command.extend(["--verify-queue", ",".join(verify_queue)])
+
+        if selected_phases:
+            command.extend(["--phases", ",".join(selected_phases)])
+
+        rel_input = str(candidate.relative_to(self.repo.resolve()))
+        command.append(rel_input)
+
         env = os.environ.copy()
-        if config["models"]["implementation"]: env["RALPH_IMPLEMENTATION_MODEL"] = config["models"]["implementation"]
-        if config["models"]["verification"]: env["RALPH_VERIFY_MODEL"] = config["models"]["verification"]
+        if not model_queue and config["models"].get("implementation"):
+            env["RALPH_IMPLEMENTATION_MODEL"] = config["models"]["implementation"]
+        if not verify_queue and config["models"].get("verification"):
+            env["RALPH_VERIFY_MODEL"] = config["models"]["verification"]
         env["RALPH_IMPLEMENTATION_TIMEOUT"] = str(config["limits"]["implementation_minutes"] * 60)
         env["RALPH_VERIFICATION_TIMEOUT"] = str(config["limits"]["verification_minutes"] * 60)
         try:
-            subprocess.Popen(command, cwd=self.repo, env=env, start_new_session=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                command,
+                cwd=self.repo,
+                env=env,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except OSError:
             return False, "Não foi possível iniciar o Ralph"
         return True, "Execução iniciada"
@@ -288,16 +756,20 @@ class RalphStore:
         collect(root_pid)
         return descendants
 
+    def _lock_dirs(self) -> list[Path]:
+        return [self.phases / ".ralph.lock", self.phases / ".lock"]
+
     def _verify_process_is_ralph(self, pid: int) -> bool:
         if pid <= 1 or pid == os.getpid():
             return False
-        lock_file = self.phases / ".lock" / "pid"
-        if lock_file.is_file():
-            try:
-                if lock_file.read_text(encoding="utf-8").strip() == str(pid):
-                    return True
-            except OSError:
-                pass
+        for lock_dir in self._lock_dirs():
+            lock_file = lock_dir / "pid"
+            if lock_file.is_file():
+                try:
+                    if lock_file.read_text(encoding="utf-8").strip() == str(pid):
+                        return True
+                except OSError:
+                    pass
         try:
             cmd = subprocess.check_output(
                 ["ps", "-p", str(pid), "-o", "command="],
@@ -309,20 +781,20 @@ class RalphStore:
         return "ralph" in cmd_lower or str(self.repo) in cmd
 
     def _cleanup_stale_lock(self, pid: int | None = None) -> None:
-        lock_dir = self.phases / ".lock"
-        lock_pid_file = lock_dir / "pid"
-        if lock_dir.is_dir():
-            if lock_pid_file.is_file():
+        for lock_dir in self._lock_dirs():
+            lock_pid_file = lock_dir / "pid"
+            if lock_dir.is_dir():
+                if lock_pid_file.is_file():
+                    try:
+                        content = lock_pid_file.read_text(encoding="utf-8").strip()
+                        if pid is None or content == str(pid):
+                            lock_pid_file.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 try:
-                    content = lock_pid_file.read_text(encoding="utf-8").strip()
-                    if pid is None or content == str(pid):
-                        lock_pid_file.unlink(missing_ok=True)
+                    lock_dir.rmdir()
                 except OSError:
                     pass
-            try:
-                lock_dir.rmdir()
-            except OSError:
-                pass
 
     def _mark_run_stopped(self, run_id: str | None) -> None:
         state_dir = self.state_dir(run_id)
@@ -371,15 +843,19 @@ class RalphStore:
         state = self.run_state(resolved_id)
         meta = (state.get("run") or {}).get("meta", {})
 
-        lock_file = self.phases / ".lock" / "pid"
         lock_pid: int | None = None
-        if lock_file.is_file():
-            try:
-                raw = lock_file.read_text(encoding="utf-8").strip()
-                if raw.isdigit():
-                    lock_pid = int(raw)
-            except OSError:
-                pass
+        has_lock_file = False
+        for lock_dir in self._lock_dirs():
+            lock_file = lock_dir / "pid"
+            if lock_file.is_file():
+                has_lock_file = True
+                try:
+                    raw = lock_file.read_text(encoding="utf-8").strip()
+                    if raw.isdigit():
+                        lock_pid = int(raw)
+                        break
+                except OSError:
+                    pass
 
         meta_pid: int | None = None
         raw_meta_pid = meta.get("pid")
@@ -390,7 +866,7 @@ class RalphStore:
         is_active_status = meta.get("status") in {"running", "waiting"}
 
         if target_pid is None:
-            if not is_active_status and not lock_file.is_file():
+            if not is_active_status and not has_lock_file:
                 return False, "Nenhuma execução ativa encontrada para encerrar", None
             return False, "PID da execução não foi encontrado", None
 
@@ -402,7 +878,6 @@ class RalphStore:
         if not self._verify_process_is_ralph(target_pid):
             return False, f"Processo PID {target_pid} não confere com execução do Ralph", target_pid
 
-        # 1. Envia SIGTERM aos descendentes e ao processo alvo
         descendants = self._get_process_tree(target_pid)
         for child in descendants:
             try:
@@ -414,14 +889,12 @@ class RalphStore:
         except OSError:
             pass
 
-        # 2. Aguarda até 3 segundos pela saída graciosa
         deadline = time.time() + 3.0
         while time.time() < deadline:
             if not self._is_pid_alive(target_pid):
                 break
             time.sleep(0.1)
 
-        # 3. Força com SIGKILL se ainda estiver ativo
         if self._is_pid_alive(target_pid):
             for child in self._get_process_tree(target_pid):
                 try:
@@ -465,16 +938,23 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
         parts = [unquote(part) for part in parsed.path.split("/") if part]
         if parts == ["api", "v1", "config"]:
             return self.json(self.store.config())
         if parts == ["api", "v1", "inputs"]:
             return self.json({"inputs": self.store.inputs()})
         if parts == ["api", "v1", "engines"]:
-            return self.json({"engines": ["codex", "claude", "opencode", "antigravity"]})
+            return self.json({"engines": self.store._active_engines()})
+        if parts == ["api", "v1", "models"]:
+            refresh = query.get("refresh", ["0"])[0] in {"1", "true", "yes"}
+            return self.json(self.store.discover_models(force_refresh=refresh))
+        if parts == ["api", "v1", "phases"]:
+            input_path = query.get("input", [""])[0]
+            ok, payload = self.store.phases_for_input(input_path)
+            return self.json(payload, HTTPStatus.OK if ok else HTTPStatus.BAD_REQUEST)
         if parts[:3] != ["api", "v1", "runs"]:
             return super().do_GET()
-        query = parse_qs(parsed.query)
         if len(parts) == 3:
             return self.json({"runs": self.store.runs()})
         run_id = parts[3] if len(parts) >= 4 else None

@@ -32,22 +32,25 @@ autenticação permanece uma exigência da própria CLI, sem armazenar tokens no
 repositório. Ele confere os quatro Skills antes de criar qualquer cópia. No
 escopo `project`, também instala o runtime em `scripts/`, incluindo
 `harness.sh` para configuração e retomada, o dashboard, os
-adaptadores e a política de modelos, registrando a plataforma como engine
-padrão do projeto.
+adaptadores e a política de modelos, registrando as engines habilitadas em
+`config/harness.json` (aceita `--platform codex,antigravity` ou `all`).
 
 ```bash
 scripts/install-platform.sh --platform codex --scope project
 scripts/install-platform.sh --platform opencode --scope project
 scripts/install-platform.sh --platform antigravity --scope project
 scripts/install-platform.sh --platform claude --scope project
+scripts/install-platform.sh --platform codex,antigravity --scope project
 ```
 
 Para Claude Code, o plugin e os comandos existentes continuam suportados. Rode
 `scripts/check-skill-drift.sh` antes de distribuir uma nova versão do harness.
 
-## Escolha de engine
+## Escolha de engine e fila de prioridade
 
-`scripts/harness.sh configure` salva os modelos e limites em
-`config/harness.json`. A engine é escolhida em cada `run` ou `resume` com
-`--engine`; nenhuma plataforma fica fixada no projeto. O Ralph Web oferece a
-mesma escolha por execução e inicia processos locais pelo painel.
+`scripts/harness.sh configure` (ou o painel Ralph Web) salva as filas de
+prioridade (`priority_queue`, `verify_queue`), modelos e limites em
+`config/harness.json`. Sem flags de execução direta, `scripts/ralph.sh` abre o
+painel Ralph Web por padrão para selecionar engines, modelos e fases (`--phases`).
+Em modo headless (`--headless`, `--engine` ou `--model-queue`), flags e variáveis
+de ambiente têm prioridade sobre a configuração salva.
